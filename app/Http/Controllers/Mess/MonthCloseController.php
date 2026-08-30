@@ -31,7 +31,7 @@ class MonthCloseController extends Controller
                 return redirect()->route('mess.closings.show', $existing->id);
             }
         } catch (\Throwable $e) {
-            Log::warning('MonthCloseController check existing: ' . $e->getMessage());
+            Log::warning('MonthCloseController check: ' . $e->getMessage());
         }
 
         $preview = $monthCloseService->preview($messId, $year, $month);

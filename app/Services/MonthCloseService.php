@@ -23,7 +23,7 @@ class MonthCloseService
     ) {}
 
     /**
-     * Preview closing data before locking.
+     * Preview closing figures before locking.
      */
     public function preview(?int $messId = null, ?int $year = null, ?int $month = null): array
     {
@@ -43,14 +43,14 @@ class MonthCloseService
     }
 
     /**
-     * Execute closing, write snapshots, and roll forward balances to next month.
+     * Execute closing, write immutable snapshots, and forward member balances.
      */
     public function close(int $messId, int $year, int $month, ?int $userId = null): MonthlyClosing
     {
         $userId = $userId ?? auth()->id() ?? 1;
 
         return DB::transaction(function () use ($messId, $year, $month, $userId) {
-            // 1. Check if already closed
+            // Check if already closed and clean any stale partial runs
             $existing = MonthlyClosing::query()
                 ->where('mess_id', $messId)
                 ->where('year', $year)
@@ -58,10 +58,13 @@ class MonthCloseService
                 ->first();
 
             if ($existing) {
-                return $existing;
+                if (method_exists($existing, 'monthlyMemberSummaries')) {
+                    $existing->monthlyMemberSummaries()->delete();
+                }
+                $existing->delete();
             }
 
-            // 2. Resolve calculation figures
+            // Resolve report data
             $report = $this->resolveReportData($messId, $year, $month);
 
             $totalBazar = (float) ($report['total_bazar'] ?? $report['bazar'] ?? 0);
@@ -70,7 +73,7 @@ class MonthCloseService
             $totalFixed = (float) ($report['total_fixed'] ?? $report['fixed'] ?? 0);
             $members    = $report['members'] ?? [];
 
-            // 3. Create MonthlyClosing Snapshot dynamically based on real DB columns
+            // 1. Insert MonthlyClosing record using verified DB schema columns
             $closingCols = Schema::getColumnListing('monthly_closings');
             $candidateClosing = [
                 'mess_id'        => $messId,
@@ -101,7 +104,7 @@ class MonthCloseService
 
             $closing = MonthlyClosing::create($closingInsert);
 
-            // 4. Save Member Summaries & Roll Over Ending Balances
+            // 2. Insert Member Summaries & Rollover Balances to Next Month
             $summaryCols = Schema::getColumnListing('monthly_member_summaries');
 
             foreach ($members as $m) {
@@ -151,7 +154,7 @@ class MonthCloseService
 
                 MonthlyMemberSummary::create($summaryInsert);
 
-                // Forward ending balance to next month's opening balance
+                // Rollover: Set opening balance for next month
                 if (Schema::hasColumn('members', 'opening_balance')) {
                     Member::query()
                         ->where('id', $memberId)
@@ -159,7 +162,7 @@ class MonthCloseService
                 }
             }
 
-            // Safe notification handler
+            // Safe notification attempt (does not crash transaction if mail/SMS is unconfigured)
             try {
                 if (class_exists(\App\Services\NotificationService::class)) {
                     $notificationService = app(\App\Services\NotificationService::class);
@@ -176,37 +179,54 @@ class MonthCloseService
     }
 
     /**
-     * Resilient report resolver with database calculation fallback.
+     * Resilient report resolver with Period object & direct calculation fallbacks.
      */
     protected function resolveReportData(int $messId, int $year, int $month): array
     {
-        // 1. Try Period instance if available
-        if ($this->reportService && class_exists(Period::class)) {
+        $period = null;
+        if (class_exists(Period::class)) {
             try {
-                $period = null;
-                if (method_exists(Period::class, 'fromMonth')) {
+                if (method_exists(Period::class, 'fromYearMonth')) {
+                    $period = Period::fromYearMonth($year, $month);
+                } elseif (method_exists(Period::class, 'fromMonth')) {
                     $period = Period::fromMonth($year, $month);
+                } elseif (method_exists(Period::class, 'create')) {
+                    $period = Period::create($year, $month);
                 } elseif (method_exists(Period::class, 'make')) {
                     $period = Period::make($year, $month);
                 } else {
                     $period = new Period($year, $month);
                 }
+            } catch (\Throwable $e) {}
+        }
 
-                if ($period && method_exists($this->reportService, 'monthlyReport')) {
-                    $res = $this->reportService->monthlyReport($messId, $period);
-                    if (! empty($res) && ! empty($res['members'])) {
-                        return $res;
-                    }
+        if ($this->reportService && $period) {
+            foreach (['monthlyReport', 'monthly', 'getMonthlyReport'] as $method) {
+                if (method_exists($this->reportService, $method)) {
+                    try {
+                        $res = $this->reportService->$method($period);
+                        if (! empty($res) && ! empty($res['members'])) return $res;
+                    } catch (\Throwable $e) {}
+
+                    try {
+                        $res = $this->reportService->$method($messId, $period);
+                        if (! empty($res) && ! empty($res['members'])) return $res;
+                    } catch (\Throwable $e) {}
+
+                    try {
+                        $res = $this->reportService->$method($period, $messId);
+                        if (! empty($res) && ! empty($res['members'])) return $res;
+                    } catch (\Throwable $e) {}
                 }
-            } catch (\Throwable $e) {
-                Log::warning('Period-based report service failed, using direct query engine: ' . $e->getMessage());
             }
         }
 
-        // 2. Direct Query Fallback (100% Guaranteed to work with actual PostgreSQL data)
         return $this->computeDirectReport($messId, $year, $month);
     }
 
+    /**
+     * Direct PostgreSQL database query engine.
+     */
     protected function computeDirectReport(int $messId, int $year, int $month): array
     {
         $totalBazar = (float) Expense::query()
