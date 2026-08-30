@@ -9,30 +9,64 @@
 @php
     $members = $data['members'] ?? [];
 
-    $formatTk = function($amount) {
-        $val = (float) ($amount ?? 0);
-        if ($val < -0.001) {
-            return '-Tk. ' . number_format(abs($val), 2);
-        }
-        return 'Tk. ' . number_format($val, 2);
+    // Helper: Round to nearest multiple of 5 (e.g., 42 -> 40, 43.5 -> 45)
+    $round5 = function ($val) {
+        return (float) (round(((float)$val) / 5) * 5);
     };
 
-    $totalPayments = collect($members)->sum(fn ($m) => (float) ($m['bill_payments'] ?? $m['paid'] ?? 0));
-    $totalMealCost = collect($members)->sum(fn ($m) => (float) ($m['meal_cost'] ?? $m['bill'] ?? 0));
-    
-    // Total adjusted paid across mess
-    $totalAdjustedPaid = collect($members)->sum(function ($m) {
-        return (float)($m['bill_payments'] ?? $m['paid'] ?? 0) + (float)($m['brought_forward'] ?? 0);
-    });
+    // Helper: Format Tk without decimals
+    $formatTk = function($amount) use ($round5) {
+        $val = $round5($amount);
+        if ($val < -0.001) {
+            return '-Tk. ' . number_format(abs($val), 0);
+        }
+        return 'Tk. ' . number_format($val, 0);
+    };
 
+    // Summary Totals
+    $rawTotalBazar = (float) ($data['total_bazar'] ?? 0);
+    $rawTotalPayments = collect($members)->sum(fn ($m) => (float) ($m['bill_payments'] ?? $m['paid'] ?? 0));
+    
+    $totalBazar = $round5($rawTotalBazar);
+    $totalPayments = $round5($rawTotalPayments);
+
+    // Exact Net Mess Balance: Total Payments - Total Bazar
+    $netMessBalance = $totalPayments - $totalBazar;
+
+    // Process each member with reconciled rounding
+    $processedMembers = [];
+    $totalMealCostSum = 0;
+    $totalAdjustedPaidSum = 0;
     $totalDueSum = 0;
     $totalAdvanceSum = 0;
-    foreach ($members as $m) {
-        $cost = (float) ($m['meal_cost'] ?? $m['bill'] ?? 0);
-        $adjP = (float) ($m['bill_payments'] ?? $m['paid'] ?? 0) + (float) ($m['brought_forward'] ?? 0);
-        $cNet = isset($m['closing_net']) ? (float)$m['closing_net'] : ($adjP - $cost);
-        if ($cNet < -0.01) $totalDueSum += abs($cNet);
-        if ($cNet > 0.01)  $totalAdvanceSum += $cNet;
+
+    foreach ($members as $row) {
+        $meals = (float) ($row['meals'] ?? 0);
+        $mealCost = $round5($row['meal_cost'] ?? $row['bill'] ?? 0);
+        $rawPaid = (float) ($row['bill_payments'] ?? $row['paid'] ?? 0);
+        $broughtForward = (float) ($row['brought_forward'] ?? 0);
+        
+        // Paid after adding credit (+) or subtracting owes (-)
+        $adjustedPaid = $round5($rawPaid + $broughtForward);
+        
+        // Closing Net Balance
+        $closingNet = $adjustedPaid - $mealCost;
+        $due = $closingNet < -0.01 ? abs($closingNet) : 0;
+        $advance = $closingNet > 0.01 ? $closingNet : 0;
+
+        $totalMealCostSum += $mealCost;
+        $totalAdjustedPaidSum += $adjustedPaid;
+        $totalDueSum += $due;
+        $totalAdvanceSum += $advance;
+
+        $processedMembers[] = [
+            'name'          => $row['name'],
+            'meals'         => $meals,
+            'meal_cost'     => $mealCost,
+            'adjusted_paid' => $adjustedPaid,
+            'due'           => $due,
+            'advance'       => $advance,
+        ];
     }
 @endphp
 
@@ -45,23 +79,23 @@
         display: none !important;
     }
 
-    /* Top Summary Overview Table */
+    /* Summary Header Table */
     .summary-card-table {
         width: 100%;
         border-collapse: collapse;
-        margin-bottom: 18px;
+        margin-bottom: 16px;
         background-color: #f8fafc;
         border: 1px solid #cbd5e1;
     }
     .summary-card-table td {
-        padding: 8px 12px;
-        font-size: 10.5px;
+        padding: 7px 10px;
+        font-size: 10px;
         width: 33.33%;
         border: 1px solid #cbd5e1;
         color: #334155;
     }
     .summary-card-table td .label {
-        font-size: 9px;
+        font-size: 8.5px;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         color: #64748b;
@@ -70,26 +104,27 @@
         margin-bottom: 2px;
     }
     .summary-card-table td .val {
-        font-size: 12px;
+        font-size: 11.5px;
         font-weight: bold;
         color: #0f172a;
     }
 
-    /* Executive Statement Table */
+    /* Statement Table */
     .report-table {
         width: 100%;
         border-collapse: collapse;
-        margin-top: 8px;
+        margin-top: 6px;
     }
     .report-table th, 
     .report-table td {
         border: 1px solid #cbd5e1;
-        padding: 6.5px 8px;
+        padding: 6px 8px;
         font-size: 10px;
         vertical-align: middle;
+        font-family: 'DejaVu Sans', sans-serif !important;
     }
     
-    /* Primary Tier Header (Navy) */
+    /* Tier 1 Navy Header */
     .report-table thead tr.main-head th {
         background-color: #0B2038;
         color: #ffffff;
@@ -97,15 +132,17 @@
         text-transform: uppercase;
         letter-spacing: 0.4px;
         font-size: 9.5px;
+        text-align: center;
     }
 
-    /* Secondary Tier Sub-Header */
+    /* Tier 2 Sub Header */
     .report-table thead tr.sub-head th {
         background-color: #172b44;
         color: #e2e8f0;
         font-weight: bold;
         font-size: 9px;
         text-transform: uppercase;
+        text-align: right;
     }
 
     .report-table td.num {
@@ -120,12 +157,12 @@
         background-color: #f8fafc;
     }
 
-    /* Subtitle beneath Paid */
+    /* Crisp Sub-Note under Paid */
     .sub-note {
         display: block;
-        font-size: 7px;
+        font-size: 8px;
         font-weight: normal;
-        color: #cbd5e1;
+        color: #93c5fd;
         margin-top: 2px;
         text-transform: none;
         letter-spacing: 0;
@@ -151,14 +188,14 @@
 </style>
 
 <!-- Brand Header -->
-<table style="width: 100%; border: none; border-collapse: collapse; margin-top: 0; margin-bottom: 16px;">
+<table style="width: 100%; border: none; border-collapse: collapse; margin-top: 0; margin-bottom: 14px;">
     <tr>
         <td style="text-align: center; border: none; padding: 0;">
-            <img src="{{ public_path('images/crest.svg') }}" width="68" height="68" style="width: 68px; height: 68px; margin: 0 auto;" />
+            <img src="{{ public_path('images/crest.svg') }}" width="64" height="64" style="width: 64px; height: 64px; margin: 0 auto;" />
         </td>
     </tr>
     <tr>
-        <td style="text-align: center; border: none; padding-top: 6px;">
+        <td style="text-align: center; border: none; padding-top: 5px;">
             <h2 style="margin: 0; font-size: 18px; font-weight: bold; color: #0B2038; letter-spacing: 1.5px; text-transform: uppercase;">
                 OFFICERS' MESS
             </h2>
@@ -188,33 +225,30 @@
     <tr>
         <td>
             <span class="label">{{ __('Total Bazar Expenditure') }}</span>
-            <span class="val">{{ $formatTk($data['total_bazar'] ?? 0) }}</span>
+            <span class="val">{{ $formatTk($totalBazar) }}</span>
         </td>
         <td>
             <span class="label">{{ __('Total Payments Collected') }}</span>
             <span class="val">{{ $formatTk($totalPayments) }}</span>
         </td>
         <td>
-            @php 
-                $pdfNet = collect($members)->sum(fn ($r) => ((float)($r['bill_payments'] ?? $r['paid'] ?? 0)) - ((float)($r['meal_cost'] ?? 0)));
-            @endphp
             <span class="label">{{ __('Net Mess Balance') }}</span>
-            <span class="val" style="color: {{ $pdfNet < 0 ? '#dc2626' : '#16a34a' }};">
-                {{ ($pdfNet < 0 ? __('Owes') : __('Credit')) . ' ' . $formatTk(abs($pdfNet)) }}
+            <span class="val" style="color: {{ $netMessBalance < 0 ? '#dc2626' : '#16a34a' }};">
+                {{ ($netMessBalance < 0 ? __('Owes') : __('Credit')) . ' ' . $formatTk(abs($netMessBalance)) }}
             </span>
         </td>
     </tr>
 </table>
 
 <!-- Member Statement Table -->
-@if (! empty($members))
+@if (! empty($processedMembers))
     <table class="report-table">
         <thead>
             <tr class="main-head">
-                <th rowspan="2" style="width: 20%; text-align: left; padding-left: 10px;">{{ __('Member') }}</th>
+                <th rowspan="2" style="width: 21%; text-align: left; padding-left: 10px;">{{ __('Member') }}</th>
                 <th rowspan="2" style="width: 10%; text-align: center;">{{ __('Meals') }}</th>
-                <th rowspan="2" style="width: 16%; text-align: right;">{{ __('Meal Cost') }}</th>
-                <th rowspan="2" style="width: 24%; text-align: right;">
+                <th rowspan="2" style="width: 15%; text-align: right;">{{ __('Meal Cost') }}</th>
+                <th rowspan="2" style="width: 24%; text-align: center;">
                     {{ __('Paid') }}
                     <span class="sub-note">(After calculating owes/credit)</span>
                 </th>
@@ -226,46 +260,31 @@
             </tr>
         </thead>
         <tbody>
-            @foreach ($members as $index => $row)
+            @foreach ($processedMembers as $index => $row)
                 @php
-                    $mealCost = (float) ($row['meal_cost'] ?? $row['bill'] ?? 0);
-                    $rawPaid = (float) ($row['bill_payments'] ?? $row['paid'] ?? 0);
-                    $broughtForward = (float) ($row['brought_forward'] ?? 0);
-                    $adjustedPaid = $rawPaid + $broughtForward;
-
-                    if (isset($row['closing_net']) && is_numeric($row['closing_net'])) {
-                        $closingNet = (float) $row['closing_net'];
-                    } elseif (isset($row['closing']) && is_numeric($row['closing'])) {
-                        $closingNet = (float) $row['closing'];
-                    } else {
-                        $closingNet = $adjustedPaid - $mealCost;
-                    }
-
-                    $due = $closingNet < -0.01 ? abs($closingNet) : 0;
-                    $advance = $closingNet > 0.01 ? $closingNet : 0;
                     $rowClass = ($index % 2 === 0) ? 'row-even' : 'row-odd';
                 @endphp
                 <tr class="{{ $rowClass }}">
                     <td style="text-align: left; font-weight: bold; color: #1e293b; padding-left: 10px;">{{ $row['name'] }}</td>
-                    <td class="num" style="text-align: center; color: #334155;">{{ number_format((float) ($row['meals'] ?? 0), 1) }}</td>
-                    <td class="num" style="color: #334155;">{{ $formatTk($mealCost) }}</td>
-                    <td class="num" style="font-weight: 500;">
-                        @if ($adjustedPaid < -0.001)
-                            <span class="text-red">{{ $formatTk($adjustedPaid) }}</span>
+                    <td class="num" style="text-align: center; color: #334155;">{{ number_format((float) $row['meals'], 1) }}</td>
+                    <td class="num" style="color: #334155;">{{ $formatTk($row['meal_cost']) }}</td>
+                    <td class="num" style="color: #334155;">
+                        @if ($row['adjusted_paid'] < -0.001)
+                            <span class="text-red">{{ $formatTk($row['adjusted_paid']) }}</span>
                         @else
-                            {{ $formatTk($adjustedPaid) }}
+                            {{ $formatTk($row['adjusted_paid']) }}
                         @endif
                     </td>
                     <td class="num">
-                        @if ($due > 0)
-                            <span class="text-red">{{ $formatTk($due) }}</span>
+                        @if ($row['due'] > 0)
+                            <span class="text-red">{{ $formatTk($row['due']) }}</span>
                         @else
                             <span style="color: #94a3b8;">{{ $formatTk(0) }}</span>
                         @endif
                     </td>
                     <td class="num">
-                        @if ($advance > 0)
-                            <span class="text-green">{{ $formatTk($advance) }}</span>
+                        @if ($row['advance'] > 0)
+                            <span class="text-green">{{ $formatTk($row['advance']) }}</span>
                         @else
                             <span style="color: #94a3b8;">{{ $formatTk(0) }}</span>
                         @endif
@@ -277,8 +296,8 @@
             <tr>
                 <td style="text-align: left; padding-left: 10px;">{{ __('Total') }}</td>
                 <td style="text-align: center;">{{ number_format((float) ($data['total_meals'] ?? 0), 1) }}</td>
-                <td class="num">{{ $formatTk($totalMealCost) }}</td>
-                <td class="num">{{ $formatTk($totalAdjustedPaid) }}</td>
+                <td class="num">{{ $formatTk($totalMealCostSum) }}</td>
+                <td class="num">{{ $formatTk($totalAdjustedPaidSum) }}</td>
                 <td class="num text-red">{{ $formatTk($totalDueSum) }}</td>
                 <td class="num text-green">{{ $formatTk($totalAdvanceSum) }}</td>
             </tr>
