@@ -20,7 +20,7 @@
         <div class="rounded-2xl border border-slate-200/80 bg-white p-12 text-center shadow-xs dark:border-slate-800 dark:bg-[#111827]">
             <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                 <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/>
                 </svg>
             </div>
             <h3 class="mt-4 text-base font-bold text-slate-900 dark:text-white">{{ __('No Closed Months Yet') }}</h3>
@@ -43,15 +43,15 @@
                     <div class="mt-4 grid grid-cols-2 gap-3 border-y border-slate-100 py-3 text-xs dark:border-slate-800">
                         <div>
                             <span class="text-slate-400 dark:text-slate-500">{{ __('Total Bazar') }}</span>
-                            <p class="mt-0.5 font-bold text-slate-800 dark:text-slate-200">৳{{ number_format((float) $closing->total_bazar, 2) }}</p>
+                            <p class="mt-0.5 font-bold text-slate-800 dark:text-slate-200">৳{{ number_format((float) ($closing->total_bazar ?? 0), 2) }}</p>
                         </div>
                         <div>
                             <span class="text-slate-400 dark:text-slate-500">{{ __('Total Meals') }}</span>
-                            <p class="mt-0.5 font-bold text-slate-800 dark:text-slate-200">{{ number_format((float) $closing->total_meals, 1) }}</p>
+                            <p class="mt-0.5 font-bold text-slate-800 dark:text-slate-200">{{ number_format((float) ($closing->total_meals ?? 0), 1) }}</p>
                         </div>
                         <div>
                             <span class="text-slate-400 dark:text-slate-500">{{ __('Meal Rate') }}</span>
-                            <p class="mt-0.5 font-bold text-emerald-600 dark:text-emerald-400">৳{{ number_format((float) $closing->meal_rate, 2) }}</p>
+                            <p class="mt-0.5 font-bold text-emerald-600 dark:text-emerald-400">৳{{ number_format((float) ($closing->meal_rate ?? 0), 2) }}</p>
                         </div>
                         <div>
                             <span class="text-slate-400 dark:text-slate-500">{{ __('Fixed Costs') }}</span>

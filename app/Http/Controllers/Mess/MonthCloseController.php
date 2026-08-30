@@ -3,11 +3,9 @@
 namespace App\Http\Controllers\Mess;
 
 use App\Http\Controllers\Controller;
-use App\Jobs\CloseMonthJob;
-use App\Models\Expense;
-use App\Models\MealEntry;
 use App\Models\Mess;
 use App\Models\MonthlyClosing;
+use App\Services\DashboardService;
 use App\Services\MonthCloseService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -17,41 +15,41 @@ use Illuminate\View\View;
 
 class MonthCloseController extends Controller
 {
-    public function index(Request $request): View
+    public function index(Request $request, DashboardService $dashboardService): View
     {
         $year = (int) $request->input('year', now()->year);
         $month = (int) $request->input('month', now()->month);
-        $messId = Mess::activeId();
+        $messId = Mess::activeId() ?? 1;
 
-        // If already closed, show the closed summary view
-        $existing = MonthlyClosing::query()
-            ->where('mess_id', $messId)
-            ->where('year', $year)
-            ->where('month', $month)
-            ->first();
+        // Check if already closed
+        $existing = null;
+        try {
+            $existing = MonthlyClosing::query()
+                ->where('mess_id', $messId)
+                ->where('year', $year)
+                ->where('month', $month)
+                ->first();
+        } catch (\Throwable $e) {
+            Log::warning('Could not check existing closing: ' . $e->getMessage());
+        }
 
         if ($existing) {
             return view('mess.closings.show', [
                 'closing' => $existing,
-                'summaries' => $existing->monthlyMemberSummaries ?? $existing->memberSummaries ?? collect(),
             ]);
         }
 
-        // Live calculation preview
-        $totalBazar = (float) Expense::query()
-            ->where('mess_id', $messId)
-            ->whereYear('date', $year)
-            ->whereMonth('date', $month)
-            ->sum('amount');
+        // Pull verified stats from DashboardService
+        $cards = [];
+        try {
+            $cards = $dashboardService->managerCards();
+        } catch (\Throwable $e) {
+            $cards = [];
+        }
 
-        $mealModel = class_exists(MealEntry::class) ? MealEntry::class : \App\Models\Meal::class;
-        $totalMeals = (float) $mealModel::query()
-            ->whereHas('member', fn ($q) => $q->where('mess_id', $messId))
-            ->whereYear('date', $year)
-            ->whereMonth('date', $month)
-            ->sum('count');
-
-        $mealRate = $totalMeals > 0 ? ($totalBazar / $totalMeals) : 0.0;
+        $totalBazar = (float) ($cards['monthly_expenses'] ?? 0);
+        $totalMeals = (float) ($cards['total_meals'] ?? 0);
+        $mealRate = (float) ($cards['meal_rate'] ?? 0);
 
         return view('mess.close.index', [
             'year' => $year,
@@ -68,24 +66,23 @@ class MonthCloseController extends Controller
     {
         $year = (int) $request->input('year', now()->year);
         $month = (int) $request->input('month', now()->month);
-        $messId = Mess::activeId();
+        $messId = Mess::activeId() ?? 1;
 
         try {
+            // Execute closing synchronously in real-time
             if (method_exists($service, 'close')) {
                 $service->close($messId, $year, $month, auth()->id());
             } elseif (method_exists($service, 'execute')) {
                 $service->execute($messId, $year, $month, auth()->id());
             } elseif (method_exists($service, 'closeMonth')) {
                 $service->closeMonth($messId, $year, $month, auth()->id());
-            } else {
-                CloseMonthJob::dispatchSync($messId, $year, $month, auth()->id());
             }
 
             return redirect()->route('mess.closings.index')->with('success', __(':period has been successfully closed and locked.', [
                 'period' => Carbon::create($year, $month, 1)->format('F Y'),
             ]));
         } catch (\Throwable $e) {
-            Log::error('Month close error: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            Log::error('Month close error: ' . $e->getMessage());
             return redirect()->back()->with('error', 'Failed to close month: ' . $e->getMessage());
         }
     }
