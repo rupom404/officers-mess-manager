@@ -31,7 +31,6 @@ class MonthlyClosingController extends Controller
 
     public function show($closing): View
     {
-        // Safe Model/ID resolution
         if (! ($closing instanceof MonthlyClosing)) {
             $closing = MonthlyClosing::findOrFail($closing);
         }
