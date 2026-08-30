@@ -20,7 +20,6 @@ class MonthCloseController extends Controller
         $month = (int) $request->input('month', now()->month);
         $messId = Mess::activeId() ?? 1;
 
-        // Redirect if already closed
         try {
             $existing = MonthlyClosing::query()
                 ->where('mess_id', $messId)
@@ -32,7 +31,7 @@ class MonthCloseController extends Controller
                 return redirect()->route('mess.closings.show', $existing->id);
             }
         } catch (\Throwable $e) {
-            Log::warning('MonthCloseController index check: ' . $e->getMessage());
+            Log::warning('MonthCloseController check existing: ' . $e->getMessage());
         }
 
         $preview = $monthCloseService->preview($messId, $year, $month);

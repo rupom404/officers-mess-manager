@@ -41,8 +41,6 @@ class MonthlyClosingController extends Controller
                 $summaries = $closing->monthlyMemberSummaries()->with('member')->get();
             } elseif (method_exists($closing, 'memberSummaries')) {
                 $summaries = $closing->memberSummaries()->with('member')->get();
-            } elseif (method_exists($closing, 'summaries')) {
-                $summaries = $closing->summaries()->with('member')->get();
             }
         } catch (\Throwable $e) {
             $summaries = collect();
