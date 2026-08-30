@@ -29,10 +29,29 @@ class MonthlyClosingController extends Controller
         ]);
     }
 
-    public function show(MonthlyClosing $closing): View
+    public function show($closing): View
     {
+        // Safe Model/ID resolution
+        if (! ($closing instanceof MonthlyClosing)) {
+            $closing = MonthlyClosing::findOrFail($closing);
+        }
+
+        $summaries = collect();
+        try {
+            if (method_exists($closing, 'monthlyMemberSummaries')) {
+                $summaries = $closing->monthlyMemberSummaries()->with('member')->get();
+            } elseif (method_exists($closing, 'memberSummaries')) {
+                $summaries = $closing->memberSummaries()->with('member')->get();
+            } elseif (method_exists($closing, 'summaries')) {
+                $summaries = $closing->summaries()->with('member')->get();
+            }
+        } catch (\Throwable $e) {
+            $summaries = collect();
+        }
+
         return view('mess.closings.show', [
-            'closing' => $closing,
+            'closing'   => $closing,
+            'summaries' => $summaries,
         ]);
     }
 }
