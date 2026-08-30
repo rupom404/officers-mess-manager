@@ -3,26 +3,48 @@
 namespace App\Http\Controllers\Mess;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\CloseMonthJob;
+use App\Models\Mess;
 use App\Models\MonthlyClosing;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\View\View;
 
-class MonthlyClosingController extends Controller
+class MonthCloseController extends Controller
 {
-    public function index(): View
+    public function index(Request $request): View
     {
-        $closings = MonthlyClosing::query()
-            ->with('closedBy')
-            ->latest('year')
-            ->latest('month')
-            ->paginate(20);
+        $year = (int) $request->input('year', now()->year);
+        $month = (int) $request->input('month', now()->month);
+        $messId = Mess::activeId();
 
-        return view('mess.closings.index', compact('closings'));
+        // Check if already closed
+        $existing = MonthlyClosing::where('mess_id', $messId)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->first();
+
+        if ($existing) {
+            return view('mess.closings.show', ['closing' => $existing]);
+        }
+
+        return view('mess.close.index', [
+            'year' => $year,
+            'month' => $month,
+        ]);
     }
 
-    public function show(MonthlyClosing $closing): View
+    public function store(Request $request): RedirectResponse
     {
-        $closing->load(['closedBy', 'memberSummaries.member', 'corrections.member']);
+        $year = (int) $request->input('year', now()->year);
+        $month = (int) $request->input('month', now()->month);
+        $messId = Mess::activeId();
 
-        return view('mess.closings.show', compact('closing'));
+        // Run the closing job immediately in real-time
+        CloseMonthJob::dispatchSync($messId, $year, $month, auth()->id());
+
+        return redirect()->route('home')->with('success', __(':period has been successfully closed and locked.', [
+            'period' => \Carbon\Carbon::create($year, $month, 1)->format('F Y'),
+        ]));
     }
 }
