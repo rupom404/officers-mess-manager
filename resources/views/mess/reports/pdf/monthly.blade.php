@@ -12,7 +12,11 @@
 
     // Currency helper for PDF
     $formatTk = function($amount) {
-        return 'Tk. ' . number_format((float) ($amount ?? 0), 2);
+        $val = (float) ($amount ?? 0);
+        if ($val < -0.001) {
+            return '-Tk. ' . number_format(abs($val), 2);
+        }
+        return 'Tk. ' . number_format($val, 2);
     };
 
     // Calculate total payments across all members
@@ -61,7 +65,7 @@
         padding: 8px 10px;
         font-size: 11px;
         width: 33.33%;
-        border: 1px solid #444444; /* Slightly bold defined border */
+        border: 1px solid #444444;
     }
 
     /* Main Table Styles */
@@ -71,17 +75,29 @@
         margin-top: 10px;
     }
     .pdf-table-compact th, .pdf-table-compact td {
-        border: 1px solid #444444; /* Slightly bold defined border */
-        padding: 7px 8px;
-        font-size: 11px;
+        border: 1px solid #444444;
+        padding: 6px 7px;
+        font-size: 10.5px;
+        vertical-align: middle;
     }
-    .pdf-table-compact th {
+    .pdf-table-compact thead th {
         background-color: #f0f0f0;
         font-weight: bold;
         text-align: center;
     }
     .pdf-table-compact td.num {
         text-align: right;
+    }
+
+    /* Sub-note under Paid column header */
+    .sub-note {
+        display: block;
+        font-size: 7.5px;
+        font-weight: normal;
+        color: #555555;
+        margin-top: 2px;
+        line-height: 1.1;
+        text-transform: none;
     }
 
     /* Color Helpers */
@@ -94,7 +110,8 @@
         font-weight: bold;
     }
 </style>
-<!-- Upper Middle Header (Table-based layout to prevent DomPDF overlapping & stretching) -->
+
+<!-- Upper Middle Header (Table-based layout to prevent DomPDF distortion & overlap) -->
 <table style="width: 100%; border: none; border-collapse: collapse; margin-top: 5px; margin-bottom: 18px;">
     <tr>
         <td style="text-align: center; border: none; padding: 0;">
@@ -125,7 +142,7 @@
         <td><strong>{{ __('Total Payments') }}:</strong> {{ $formatTk($totalPayments) }}</td>
         <td>
             @php 
-                $pdfNet = collect($members)->sum(fn ($r) => ((float)($r['bill_payments'] ?? $r['paid'] ?? 0)) - ((float)($r['meal_cost'] ?? 0)));
+                $pdfNet = collect($members)->sum(fn ($r) => ((float)($r['bill_payments'] ?? $r['paid'] ?? 0)) - ((float)($r['meal_cost'] ?? $r['bill'] ?? 0)));
             @endphp
             <strong>{{ __('Balance (net)') }}:</strong> {{ ($pdfNet < 0 ? __('Owes') : __('Credit')) . ' ' . $formatTk(abs($pdfNet)) }}
         </td>
@@ -137,42 +154,55 @@
     <table class="pdf-table-compact">
         <thead>
             <tr>
-                <th style="text-align: left;">{{ __('Member') }}</th>
-                <th class="num">{{ __('Meals') }}</th>
-                <th class="num">{{ __('Meal cost') }}</th>
-                <th class="num">{{ __('Paid') }}</th>
-                <th class="num">{{ __('Due') }}</th>
-                <th class="num">{{ __('Advance') }}</th>
+                <th rowspan="2" style="width: 20%; text-align: left;">{{ __('Member') }}</th>
+                <th rowspan="2" style="width: 10%; text-align: center;">{{ __('Meals') }}</th>
+                <th rowspan="2" style="width: 16%; text-align: right;">{{ __('Meal cost') }}</th>
+                <th rowspan="2" style="width: 24%; text-align: right;">
+                    {{ __('Paid') }}
+                    <span class="sub-note">(After calculating owes/credit)</span>
+                </th>
+                <th colspan="2" style="width: 30%; text-align: center;">Closing (Net)</th>
+            </tr>
+            <tr>
+                <th style="width: 15%; text-align: right;">{{ __('Due') }}</th>
+                <th style="width: 15%; text-align: right;">{{ __('Advance') }}</th>
             </tr>
         </thead>
         <tbody>
             @foreach ($members as $row)
                 @php
                     $mealCost = (float) ($row['meal_cost'] ?? $row['bill'] ?? 0);
-                    $paid = (float) ($row['bill_payments'] ?? $row['paid'] ?? 0);
+                    $rawPaid = (float) ($row['bill_payments'] ?? $row['paid'] ?? 0);
                     $broughtForward = (float) ($row['brought_forward'] ?? 0);
                     
-                    // Determine Closing (Net) Balance: Positive = Credit, Negative = Owes
+                    // Paid after adjusting Brought Forward (Credit [+] or Owes [-])
+                    $adjustedPaid = $rawPaid + $broughtForward;
+
+                    // Closing (Net) calculation
                     if (isset($row['closing_net']) && is_numeric($row['closing_net'])) {
                         $closingNet = (float) $row['closing_net'];
                     } elseif (isset($row['closing']) && is_numeric($row['closing'])) {
                         $closingNet = (float) $row['closing'];
                     } else {
-                        $closingNet = ($paid - $mealCost) + $broughtForward;
+                        $closingNet = $adjustedPaid - $mealCost;
                     }
 
-                    // If net closing is negative -> owes money -> Due
-                    // If net closing is positive -> has credit -> Advance
-                    $due = $closingNet < 0 ? abs($closingNet) : 0;
-                    $advance = $closingNet > 0 ? $closingNet : 0;
+                    $due = $closingNet < -0.01 ? abs($closingNet) : 0;
+                    $advance = $closingNet > 0.01 ? $closingNet : 0;
                 @endphp
                 <tr>
-                    <td>{{ $row['name'] }}</td>
-                    <td class="num">{{ number_format((float) ($row['meals'] ?? 0), 1) }}</td>
+                    <td style="text-align: left;">{{ $row['name'] }}</td>
+                    <td class="num" style="text-align: center;">{{ number_format((float) ($row['meals'] ?? 0), 1) }}</td>
                     <td class="num">{{ $formatTk($mealCost) }}</td>
-                    <td class="num">{{ $formatTk($paid) }}</td>
+                    <td class="num">
+                        @if ($adjustedPaid < -0.001)
+                            <span class="text-red">{{ $formatTk($adjustedPaid) }}</span>
+                        @else
+                            {{ $formatTk($adjustedPaid) }}
+                        @endif
+                    </td>
                     
-                    <!-- Due (Red if member owes) -->
+                    <!-- Closing (Net) Due -->
                     <td class="num">
                         @if ($due > 0)
                             <span class="text-red">{{ $formatTk($due) }}</span>
@@ -181,7 +211,7 @@
                         @endif
                     </td>
 
-                    <!-- Advance (Green if member has credit) -->
+                    <!-- Closing (Net) Advance -->
                     <td class="num">
                         @if ($advance > 0)
                             <span class="text-green">{{ $formatTk($advance) }}</span>
