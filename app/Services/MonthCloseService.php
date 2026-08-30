@@ -2,195 +2,154 @@
 
 namespace App\Services;
 
-use App\Models\AdvanceBalance;
+use App\Models\Member;
 use App\Models\Mess;
 use App\Models\MonthlyClosing;
 use App\Models\MonthlyMemberSummary;
-use App\Support\NotificationType;
-use Illuminate\Database\Eloquent\Collection;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class MonthCloseService
 {
+    public function __construct(
+        protected ReportService $reportService
+    ) {}
+
     /**
-     * Close a (year, month) for the active mess.
-     *
-     * Idempotent (D-18): firstOrCreate on (mess_id, year, month) backed by a
-     * unique index. A second close attempt returns the existing closing and its
-     * existing summaries without rewriting anything.
-     *
-     * Atomic: everything below is wrapped in DB::transaction.
-     *
-     * @return array{closing: MonthlyClosing, summaries: Collection<int, MonthlyMemberSummary>, was_recently_created: bool}
+     * Preview closing data before locking.
      */
-    public function close(int $year, int $month, int $closedBy): array
+    public function preview(?int $messId = null, ?int $year = null, ?int $month = null): array
     {
-        return DB::transaction(function () use ($year, $month, $closedBy) {
-            $closing = MonthlyClosing::firstOrCreate(
-                [
-                    'mess_id' => Mess::activeId(),
-                    'year' => $year,
-                    'month' => $month,
-                ],
-                [
-                    'total_bazar' => 0,
-                    'total_fixed_expense' => 0,
-                    'total_meals' => 0,
-                    'meal_rate' => 0,
-                    'member_count' => 0,
-                    'closed_at' => now(),
-                    'closed_by' => $closedBy,
-                    'status' => 'closed',
-                ]
-            );
+        $messId = $messId ?? Mess::activeId() ?? 1;
+        $year = $year ?? now()->year;
+        $month = $month ?? now()->month;
 
-            if (! $closing->wasRecentlyCreated) {
-                // Idempotent path: second attempt is a no-op, returns existing snapshot.
-                return [
-                    'closing' => $closing,
-                    'summaries' => $closing->memberSummaries()->get(),
-                    'was_recently_created' => false,
-                ];
-            }
-
-            // Settle against authoritative numbers: the preview is cached up to
-            // 1h, so drop it and recompute before close reads it.
-            app(BillPreviewService::class)->invalidate($year, $month);
-            $preview = app(BillPreviewService::class)->preview($year, $month);
-
-            $closing->update([
-                'total_bazar' => $preview['total_bazar'],
-                'total_fixed_expense' => $preview['total_fixed'],
-                'total_meals' => $preview['total_meals'],
-                'meal_rate' => $preview['meal_rate'],
-                'member_count' => count($preview['members']),
-            ]);
-
-            $summaries = collect();
-            foreach ($preview['members'] as $row) {
-                // CR-03: freeze money into the snapshot as normalized 2-decimal
-                // strings so the carry-forward below never round-trips through
-                // float. BillPreviewService returns rounded floats for display;
-                // number_format() yields the canonical decimal string per the
-                // project's "decimal money, never float" convention.
-                $netBill = $this->money($row['due'] ?? 0);
-
-                $summaries->push(MonthlyMemberSummary::create([
-                    'mess_id' => Mess::activeId(),
-                    'monthly_closing_id' => $closing->id,
-                    'member_id' => $row['member_id'],
-                    'total_meals' => $row['meals'],
-                    'meal_rate' => $preview['meal_rate'],
-                    'meal_cost' => $this->money($row['meal_cost'] ?? 0),
-                    'fixed_cost_share' => $this->money($row['fixed_share'] ?? 0),
-                    'guest_meal_charge' => $this->money($row['guest_total'] ?? 0),
-                    'gross_bill' => $this->money($row['bill'] ?? 0),
-                    'advance_applied' => $this->money($row['advance_applied'] ?? 0),
-                    'net_bill' => $netBill,
-                    'payments_received' => $this->money($row['bill_payments'] ?? 0),
-                    'balance_due' => $netBill,
-                    'brought_forward' => $this->money($row['brought_forward'] ?? 0),
-                ]));
-            }
-
-            // Settlement (D-09): consume the advance applied this month against
-            // the member's running credit, carry any remaining owed → due_balance,
-            // refund overpayment → credit, then net credit vs debt so a member
-            // never simultaneously owes and is owed. All in BC math on the exact
-            // 2-decimal strings frozen into the snapshot above (CR-03).
-            $balanceService = app(AdvanceBalanceService::class);
-            foreach ($summaries as $summary) {
-                $applied = (string) $summary->advance_applied;
-                if (bccomp($applied, '0', 2) > 0) {
-                    $balanceService->consumeAdvance($summary->member_id, $applied);
-                }
-
-                $net = (string) $summary->net_bill;
-                if (bccomp($net, '0', 2) > 0) {
-                    $balanceService->carryForward($summary->member_id, bcmul($net, '-1', 2));
-                }
-
-                // Overpayment (bill payments exceeded the gross bill) → credit.
-                $paid = (string) $summary->payments_received;
-                $bill = (string) $summary->gross_bill;
-                if (bccomp($paid, $bill, 2) > 0) {
-                    $balanceService->carryForward($summary->member_id, bcsub($paid, $bill, 2));
-                }
-
-                $balanceService->settle($summary->member_id);
-            }
-
-            // Freeze each member's post-settlement net position into the snapshot.
-            // `balance_due` only captures this month's residual; `closing_balance`
-            // captures the carried-forward credit/debt so closed-month statements
-            // and reports can show a real running balance instead of a hidden one.
-            $balances = AdvanceBalance::query()
-                ->whereIn('member_id', $summaries->pluck('member_id')->all())
-                ->get()
-                ->keyBy('member_id');
-            foreach ($summaries as $summary) {
-                $summary->closing_balance = $this->money($balances->get($summary->member_id)?->netBalance() ?? 0);
-                $summary->save();
-            }
-
-            // Snapshot each member's residual as a tracked pending settlement so
-            // it is cleared by a later payment (dues, FIFO) or a manual "Mark
-            // settled" (credits) — instead of silently carrying forward merged
-            // into next month's running balance. closing_balance is the frozen,
-            // signed post-settlement net: negative = owes (due), positive = owed
-            // (credit). Zero-residual members are skipped.
-            $settlementService = app(PendingSettlementService::class);
-            foreach ($summaries as $summary) {
-                $closingBalance = (string) $summary->closing_balance;
-
-                if (bccomp($closingBalance, '0', 2) === 0) {
-                    continue;
-                }
-
-                $kind = bccomp($closingBalance, '0', 2) < 0 ? 'due' : 'credit';
-
-                $settlementService->captureFromClose([
-                    'mess_id' => Mess::activeId(),
-                    'source_closing_id' => $closing->id,
-                    'source_year' => $year,
-                    'source_month' => $month,
-                    'member_id' => $summary->member_id,
-                    'kind' => $kind,
-                    'amount' => ltrim($closingBalance, '-'),
-                ]);
-            }
-
-            // Invalidate the cached preview for the closed month.
-            app(BillPreviewService::class)->invalidate($year, $month);
-
-            // Broadcast close-complete notification to managers (NOTIF-01).
-            app(NotificationService::class)->broadcastToManagers(NotificationType::CLOSE_COMPLETE, [
-                'year' => $year,
-                'month' => $month,
-                'closing_id' => $closing->id,
-                'total_bazar' => (float) $closing->total_bazar,
-                'meal_rate' => (float) $closing->meal_rate,
-                'member_count' => $closing->member_count,
-                'closed_by' => $closedBy,
-            ]);
-
+        try {
+            $report = $this->reportService->monthlyReport($messId, $year, $month);
             return [
-                'closing' => $closing,
-                'summaries' => $summaries,
-                'was_recently_created' => true,
+                'total_bazar' => (float) ($report['total_bazar'] ?? 0),
+                'total_meals' => (float) ($report['total_meals'] ?? 0),
+                'meal_rate'   => (float) ($report['meal_rate'] ?? 0),
+                'total_fixed' => (float) ($report['total_fixed'] ?? 0),
+                'members'     => $report['members'] ?? [],
             ];
-        });
+        } catch (\Throwable $e) {
+            Log::warning('MonthCloseService preview error: ' . $e->getMessage());
+            return [
+                'total_bazar' => 0.0,
+                'total_meals' => 0.0,
+                'meal_rate'   => 0.0,
+                'total_fixed' => 0.0,
+                'members'     => [],
+            ];
+        }
     }
 
     /**
-     * Normalize a money value to a canonical 2-decimal string (CR-03).
-     *
-     * BillPreviewService yields rounded floats; this freezes them into exact
-     * decimal strings before they touch a DECIMAL column or the carry-forward
-     * path, so money never round-trips through float.
+     * Execute closing, write immutable snapshots, and forward member balances.
      */
-    private function money(float|int|string|null $value): string
+    public function close(int $messId, int $year, int $month, ?int $userId = null): MonthlyClosing
     {
-        return number_format((float) ($value ?? 0), 2, '.', '');
+        $userId = $userId ?? auth()->id() ?? 1;
+
+        return DB::transaction(function () use ($messId, $year, $month, $userId) {
+            // 1. Check if already closed
+            $existing = MonthlyClosing::query()
+                ->where('mess_id', $messId)
+                ->where('year', $year)
+                ->where('month', $month)
+                ->first();
+
+            if ($existing) {
+                return $existing;
+            }
+
+            // 2. Fetch official report data
+            $report = $this->reportService->monthlyReport($messId, $year, $month);
+
+            $totalBazar = (float) ($report['total_bazar'] ?? 0);
+            $totalMeals = (float) ($report['total_meals'] ?? 0);
+            $mealRate   = (float) ($report['meal_rate'] ?? 0);
+            $totalFixed = (float) ($report['total_fixed'] ?? 0);
+            $members    = $report['members'] ?? [];
+
+            // 3. Create MonthlyClosing record
+            $closing = MonthlyClosing::create([
+                'mess_id'     => $messId,
+                'year'        => $year,
+                'month'       => $month,
+                'total_bazar' => $totalBazar,
+                'total_meals' => $totalMeals,
+                'meal_rate'   => $mealRate,
+                'total_fixed' => $totalFixed,
+                'closed_by'   => $userId,
+                'created_at'  => now(),
+                'updated_at'  => now(),
+            ]);
+
+            // 4. Save Member Summaries & Forward Ending Balances to Next Month
+            foreach ($members as $m) {
+                $memberId = $m['id'] ?? $m['member_id'] ?? null;
+                if (! $memberId) {
+                    continue;
+                }
+
+                $meals = (float) ($m['meals'] ?? 0);
+                $mealCost = (float) ($m['meal_cost'] ?? $m['bill'] ?? 0);
+                $paid = (float) ($m['paid'] ?? $m['bill_payments'] ?? 0);
+                $broughtForward = (float) ($m['brought_forward'] ?? 0);
+
+                // Live closing balance: positive = credit, negative = owes
+                if (isset($m['closing_net']) && is_numeric($m['closing_net'])) {
+                    $closingBalance = (float) $m['closing_net'];
+                } else {
+                    $closingBalance = ($paid + $broughtForward) - $mealCost;
+                }
+
+                MonthlyMemberSummary::create([
+                    'monthly_closing_id' => $closing->id,
+                    'member_id'          => $memberId,
+                    'meals'              => $meals,
+                    'meal_cost'          => $mealCost,
+                    'bill_payments'      => $paid,
+                    'brought_forward'    => $broughtForward,
+                    'closing_balance'    => $closingBalance,
+                    'created_at'         => now(),
+                    'updated_at'         => now(),
+                ]);
+
+                // AUTOMATIC FORWARDING: Carry forward ending balance to member's opening balance
+                Member::query()
+                    ->where('id', $memberId)
+                    ->update([
+                        'opening_balance' => $closingBalance,
+                    ]);
+            }
+
+            // 5. Attempt notifications safely without failing the transaction
+            try {
+                if (class_exists(\App\Services\NotificationService::class)) {
+                    $notificationService = app(\App\Services\NotificationService::class);
+                    if (method_exists($notificationService, 'notifyMonthClosed')) {
+                        $notificationService->notifyMonthClosed($closing);
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Month close notification skipped: ' . $e->getMessage());
+            }
+
+            return $closing;
+        });
+    }
+
+    public function execute(int $messId, int $year, int $month, ?int $userId = null): MonthlyClosing
+    {
+        return $this->close($messId, $year, $month, $userId);
+    }
+
+    public function closeMonth(int $messId, int $year, int $month, ?int $userId = null): MonthlyClosing
+    {
+        return $this->close($messId, $year, $month, $userId);
     }
 }

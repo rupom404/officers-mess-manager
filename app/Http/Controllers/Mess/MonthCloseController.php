@@ -32,32 +32,19 @@ class MonthCloseController extends Controller
                 return redirect()->route('mess.closings.show', $existing->id);
             }
         } catch (\Throwable $e) {
-            Log::warning('MonthCloseController check existing error: ' . $e->getMessage());
+            Log::warning('MonthCloseController check existing: ' . $e->getMessage());
         }
 
-        // Fetch preview data safely using MonthCloseService if available
-        $previewData = [];
-        if (method_exists($monthCloseService, 'preview')) {
-            try {
-                $previewData = $monthCloseService->preview($messId, $year, $month);
-            } catch (\Throwable $e) {
-                Log::warning('MonthCloseService preview error: ' . $e->getMessage());
-            }
-        }
-
-        $totalBazar = (float) ($previewData['total_bazar'] ?? $previewData['bazar'] ?? $previewData['expenses'] ?? 16830);
-        $totalMeals = (float) ($previewData['total_meals'] ?? $previewData['meals'] ?? 322);
-        $mealRate   = (float) ($previewData['meal_rate'] ?? ($totalMeals > 0 ? ($totalBazar / $totalMeals) : 52.27));
-        $totalFixed = (float) ($previewData['total_fixed'] ?? $previewData['fixed'] ?? 0);
+        $preview = $monthCloseService->preview($messId, $year, $month);
 
         return view('mess.close.index', [
             'year'        => $year,
             'month'       => $month,
             'periodLabel' => Carbon::create($year, $month, 1)->format('F Y'),
-            'totalBazar'  => $totalBazar,
-            'totalMeals'  => $totalMeals,
-            'mealRate'    => $mealRate,
-            'totalFixed'  => $totalFixed,
+            'totalBazar'  => (float) ($preview['total_bazar'] ?? 0),
+            'totalMeals'  => (float) ($preview['total_meals'] ?? 0),
+            'mealRate'    => (float) ($preview['meal_rate'] ?? 0),
+            'totalFixed'  => (float) ($preview['total_fixed'] ?? 0),
         ]);
     }
 
@@ -66,45 +53,12 @@ class MonthCloseController extends Controller
         $year = (int) $request->input('year', now()->year);
         $month = (int) $request->input('month', now()->month);
         $messId = Mess::activeId() ?? 1;
-        $userId = auth()->id();
+        $userId = auth()->id() ?? 1;
 
         try {
-            // Check if already closed
-            $alreadyClosed = MonthlyClosing::query()
-                ->where('mess_id', $messId)
-                ->where('year', $year)
-                ->where('month', $month)
-                ->first();
+            $closing = $monthCloseService->close($messId, $year, $month, $userId);
 
-            if ($alreadyClosed) {
-                return redirect()->route('mess.closings.show', $alreadyClosed->id)
-                    ->with('info', __(':period is already closed.', ['period' => Carbon::create($year, $month, 1)->format('F Y')]));
-            }
-
-            // Execute closing synchronously in real-time
-            $closing = null;
-            if (method_exists($monthCloseService, 'close')) {
-                $closing = $monthCloseService->close($messId, $year, $month, $userId);
-            } elseif (method_exists($monthCloseService, 'execute')) {
-                $closing = $monthCloseService->execute($messId, $year, $month, $userId);
-            } elseif (method_exists($monthCloseService, 'closeMonth')) {
-                $closing = $monthCloseService->closeMonth($messId, $year, $month, $userId);
-            } else {
-                \App\Jobs\CloseMonthJob::dispatchSync($messId, $year, $month, $userId);
-                $closing = MonthlyClosing::query()
-                    ->where('mess_id', $messId)
-                    ->where('year', $year)
-                    ->where('month', $month)
-                    ->first();
-            }
-
-            if ($closing) {
-                return redirect()->route('mess.closings.show', $closing->id)->with('success', __(':period has been successfully closed and locked.', [
-                    'period' => Carbon::create($year, $month, 1)->format('F Y'),
-                ]));
-            }
-
-            return redirect()->route('mess.closings.index')->with('success', __(':period has been successfully closed and locked.', [
+            return redirect()->route('mess.closings.show', $closing->id)->with('success', __(':period has been successfully closed and locked.', [
                 'period' => Carbon::create($year, $month, 1)->format('F Y'),
             ]));
         } catch (\Throwable $e) {
