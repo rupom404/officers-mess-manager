@@ -18,11 +18,12 @@ use Illuminate\Support\Facades\Schema;
 class MonthCloseService
 {
     public function __construct(
-        protected ?ReportService $reportService = null
+        protected ?ReportService $reportService = null,
+        protected ?AdvanceBalanceService $advanceBalanceService = null,
     ) {}
 
     /**
-     * Preview the figures that will be frozen by month close.
+     * Preview the exact figures that will be frozen by month close.
      */
     public function preview(?int $messId = null, ?int $year = null, ?int $month = null): array
     {
@@ -43,6 +44,10 @@ class MonthCloseService
 
     /**
      * Execute month closing atomically and persist the immutable monthly snapshot.
+     *
+     * The snapshot is a frozen copy of the Monthly Report values. In particular,
+     * brought_forward is preserved and closing_balance is the final signed amount
+     * that becomes the next month's opening position.
      */
     public function close(int $messId, int $year, int $month, ?int $userId = null): MonthlyClosing
     {
@@ -67,8 +72,6 @@ class MonthCloseService
             $totalFixed = (float) ($report['total_fixed'] ?? $report['fixed'] ?? 0);
             $members = $report['members'] ?? [];
 
-            // These columns are required by the actual monthly_closings schema.
-            // Do not use guessed aliases here: PostgreSQL enforces NOT NULL.
             $closing = new MonthlyClosing();
             $closing->mess_id = $messId;
             $closing->year = $year;
@@ -83,7 +86,6 @@ class MonthCloseService
             $closing->status = 'closed';
             $closing->save();
 
-            // Persist the exact fields expected by monthly_member_summaries.
             foreach ($members as $member) {
                 $memberId = $member['member_id'] ?? $member['id'] ?? null;
                 if (! $memberId) {
@@ -102,11 +104,12 @@ class MonthCloseService
                     ? (float) $member['due']
                     : round(max(0, $grossBill - $billPayments), 2);
 
-                // Historical schema name: advance_applied actually stores bill-payment-type payments.
+                // Historical column name: advance_applied stores bill payments.
                 $advanceApplied = $billPayments;
                 $netBill = round($grossBill - $advanceApplied, 2);
 
-                // Final net position after this month's activity.
+                // Signed final position. This is the value that must become
+                // next month's brought-forward amount.
                 $closingBalance = round(
                     $broughtForward + $advancePayments + $billPayments - $grossBill,
                     2
@@ -127,7 +130,6 @@ class MonthCloseService
                 $summary->payments_received = round($billPayments, 2);
                 $summary->balance_due = round($due, 2);
 
-                // closing_balance was added later and exists on the current model/schema.
                 if (Schema::hasColumn('monthly_member_summaries', 'brought_forward')) {
                     $summary->brought_forward = round($broughtForward, 2);
                 }
@@ -136,6 +138,33 @@ class MonthCloseService
                 }
 
                 $summary->save();
+
+                // Freeze the closing net into the running balance used by the
+                // next month's BillPreviewService. Before close, the running
+                // signed net is opening position + this month's advance deposits;
+                // bill payments and the current bill have not yet been reflected
+                // in advance_balances. Carry only the delta, then normalize any
+                // simultaneous credit/debt into one signed position.
+                if ($this->advanceBalanceService) {
+                    $running = \App\Models\AdvanceBalance::query()
+                        ->where('member_id', $memberId)
+                        ->lockForUpdate()
+                        ->first();
+
+                    $currentNet = $running
+                        ? round((float) $running->balance - (float) $running->due_balance, 2)
+                        : 0.0;
+
+                    $delta = round($closingBalance - $currentNet, 2);
+                    if (abs($delta) >= 0.005) {
+                        $this->advanceBalanceService->carryForward(
+                            $memberId,
+                            number_format($delta, 2, '.', '')
+                        );
+                    }
+
+                    $this->advanceBalanceService->settle($memberId);
+                }
             }
 
             try {
@@ -161,7 +190,6 @@ class MonthCloseService
         if ($this->reportService && method_exists($this->reportService, 'monthlyReport')) {
             try {
                 $report = $this->reportService->monthlyReport($year, $month);
-
                 if (is_array($report) && array_key_exists('members', $report)) {
                     return $report;
                 }
@@ -178,8 +206,7 @@ class MonthCloseService
     }
 
     /**
-     * Compatibility fallback for older deployments. The current members schema
-     * uses status='active'/'former', not an is_active column.
+     * Compatibility fallback for older deployments.
      */
     protected function computeDirectReport(int $messId, int $year, int $month): array
     {
@@ -200,14 +227,12 @@ class MonthCloseService
 
         foreach ($members as $member) {
             $meals = 0.0;
-
             if (Schema::hasTable('meal_entries')) {
                 $entries = MealEntry::withoutGlobalScopes()
                     ->where('member_id', $member->id)
                     ->whereYear('date', $year)
                     ->whereMonth('date', $month)
                     ->get(['breakfast', 'lunch', 'dinner']);
-
                 foreach ($entries as $entry) {
                     $meals += ($entry->breakfast ? 0.5 : 0)
                         + ($entry->lunch ? 1.0 : 0)
@@ -233,9 +258,7 @@ class MonthCloseService
                     ->sum('amount');
             }
 
-            $broughtForward = 0.0;
             $totalMeals += $meals;
-
             $processedMembers[] = [
                 'id' => $member->id,
                 'member_id' => $member->id,
@@ -245,7 +268,7 @@ class MonthCloseService
                 'paid' => $paid,
                 'bill_payments' => $paid,
                 'advance_payments' => 0.0,
-                'brought_forward' => $broughtForward,
+                'brought_forward' => 0.0,
             ];
         }
 
