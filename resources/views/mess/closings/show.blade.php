@@ -18,10 +18,10 @@
                 </span>
             </div>
             <p class="mt-1 text-sm font-medium text-slate-500 dark:text-slate-400">
-                {{ __('Closed on :date', ['date' => $closing->created_at?->format('d M Y, h:i A') ?? 'N/A']) }}
+                {{ __('Closed on :date', ['date' => ($closing->closed_at ?? $closing->created_at)?->format('d M Y, h:i A') ?? 'N/A']) }}
             </p>
         </div>
-        
+
         <div class="flex items-center gap-2">
             <a href="{{ route('mess.reports.monthly', ['year' => $closing->year, 'month' => $closing->month]) }}" class="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-xs transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-[#111827] dark:text-slate-300 dark:hover:bg-[#1a2942]">
                 {{ __('Monthly Report') }}
@@ -51,7 +51,7 @@
 
         <div class="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-[#111827]">
             <span class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{{ __('TOTAL FIXED') }}</span>
-            <p class="mt-2 text-2xl font-black text-slate-900 dark:text-white">৳{{ number_format((float) ($closing->total_fixed ?? 0), 2) }}</p>
+            <p class="mt-2 text-2xl font-black text-slate-900 dark:text-white">৳{{ number_format((float) ($closing->total_fixed_expense ?? 0), 2) }}</p>
         </div>
     </div>
 
@@ -60,7 +60,7 @@
         <div class="border-b border-slate-100 px-5 py-4 dark:border-slate-800">
             <h3 class="text-sm font-black text-slate-900 dark:text-white">{{ __('Member Closing Balances') }}</h3>
         </div>
-        
+
         <div class="overflow-x-auto">
             <table class="w-full text-left text-xs">
                 <thead class="border-b border-slate-200 bg-slate-50 font-bold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-[#0e1726] dark:text-slate-400">
@@ -77,14 +77,20 @@
                     @forelse ($summaryList as $sum)
                         @php
                             $memberName = $sum->member->name ?? $sum->member_name ?? 'Member';
-                            $net = (float) ($sum->closing_balance ?? $sum->closing_net ?? $sum->net_balance ?? 0);
+                            // Snapshot schema uses total_meals, payments_received and
+                            // closing_balance. The old view referenced non-existent
+                            // aliases (meals, bill_payments), which rendered zeros.
+                            $meals = (float) ($sum->total_meals ?? $sum->meals ?? 0);
+                            $paid = (float) ($sum->payments_received ?? $sum->bill_payments ?? $sum->paid ?? 0);
+                            $broughtForward = (float) ($sum->brought_forward ?? 0);
+                            $net = (float) ($sum->closing_balance ?? 0);
                         @endphp
                         <tr class="transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
                             <td class="px-5 py-3 font-semibold text-slate-900 dark:text-white">{{ $memberName }}</td>
-                            <td class="px-5 py-3 text-center text-slate-700 dark:text-slate-300">{{ number_format((float) ($sum->meals ?? 0), 1) }}</td>
+                            <td class="px-5 py-3 text-center text-slate-700 dark:text-slate-300">{{ number_format($meals, 1) }}</td>
                             <td class="px-5 py-3 text-right text-slate-700 dark:text-slate-300">৳{{ number_format((float) ($sum->meal_cost ?? 0), 2) }}</td>
-                            <td class="px-5 py-3 text-right text-slate-700 dark:text-slate-300">৳{{ number_format((float) ($sum->bill_payments ?? $sum->paid ?? 0), 2) }}</td>
-                            <td class="px-5 py-3 text-right text-slate-700 dark:text-slate-300">৳{{ number_format((float) ($sum->brought_forward ?? 0), 2) }}</td>
+                            <td class="px-5 py-3 text-right text-slate-700 dark:text-slate-300">৳{{ number_format($paid, 2) }}</td>
+                            <td class="px-5 py-3 text-right text-slate-700 dark:text-slate-300">৳{{ number_format($broughtForward, 2) }}</td>
                             <td class="px-5 py-3 text-right font-black {{ $net < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400' }}">
                                 {{ $net < 0 ? 'Owes ৳' . number_format(abs($net), 2) : 'Credit ৳' . number_format($net, 2) }}
                             </td>
