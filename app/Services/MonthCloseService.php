@@ -42,7 +42,7 @@ class MonthCloseService
     }
 
     /**
-     * Execute month closing atomically, persist snapshots, and carry forward balances.
+     * Execute month closing atomically and persist the immutable monthly snapshot.
      */
     public function close(int $messId, int $year, int $month, ?int $userId = null): MonthlyClosing
     {
@@ -67,84 +67,77 @@ class MonthCloseService
             $totalFixed = (float) ($report['total_fixed'] ?? $report['fixed'] ?? 0);
             $members = $report['members'] ?? [];
 
-            $closingColumns = Schema::hasTable('monthly_closings')
-                ? Schema::getColumnListing('monthly_closings')
-                : [];
+            // These columns are required by the actual monthly_closings schema.
+            // Do not use guessed aliases here: PostgreSQL enforces NOT NULL.
+            $closing = new MonthlyClosing();
+            $closing->mess_id = $messId;
+            $closing->year = $year;
+            $closing->month = $month;
+            $closing->total_bazar = round($totalBazar, 2);
+            $closing->total_fixed_expense = round($totalFixed, 2);
+            $closing->total_meals = round($totalMeals, 2);
+            $closing->meal_rate = round($mealRate, 4);
+            $closing->member_count = count($members);
+            $closing->closed_at = now();
+            $closing->closed_by = $userId;
+            $closing->status = 'closed';
+            $closing->save();
 
-            $closingData = $this->onlyExistingColumns($closingColumns, [
-                'mess_id' => $messId,
-                'year' => $year,
-                'month' => $month,
-                'total_bazar' => $totalBazar,
-                'bazar_total' => $totalBazar,
-                'total_expenses' => $totalBazar,
-                'total_meals' => $totalMeals,
-                'meals_total' => $totalMeals,
-                'meal_rate' => $mealRate,
-                'rate' => $mealRate,
-                'total_fixed' => $totalFixed,
-                'fixed_total' => $totalFixed,
-                'closed_by' => $userId,
-                'user_id' => $userId,
-                'status' => 'closed',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-
-            MonthlyClosing::unguard();
-            $closing = MonthlyClosing::create($closingData);
-            MonthlyClosing::reguard();
-
-            $summaryColumns = Schema::hasTable('monthly_member_summaries')
-                ? Schema::getColumnListing('monthly_member_summaries')
-                : [];
-
+            // Persist the exact fields expected by monthly_member_summaries.
             foreach ($members as $member) {
-                $memberId = $member['id'] ?? $member['member_id'] ?? null;
+                $memberId = $member['member_id'] ?? $member['id'] ?? null;
                 if (! $memberId) {
                     continue;
                 }
 
-                $meals = (float) ($member['meals'] ?? 0);
-                $mealCost = (float) ($member['meal_cost'] ?? $member['bill'] ?? 0);
-                $paid = (float) ($member['bill_payments'] ?? $member['paid'] ?? 0);
+                $meals = (float) ($member['meals'] ?? $member['total_meals'] ?? 0);
+                $mealCost = (float) ($member['meal_cost'] ?? 0);
+                $fixedShare = (float) ($member['fixed_share'] ?? $member['fixed_cost_share'] ?? 0);
+                $guestCharge = (float) ($member['guest_total'] ?? $member['guest_meal_charge'] ?? 0);
+                $grossBill = (float) ($member['bill'] ?? $member['gross_bill'] ?? ($mealCost + $fixedShare + $guestCharge));
+                $billPayments = (float) ($member['bill_payments'] ?? $member['payments_received'] ?? 0);
+                $advancePayments = (float) ($member['advance_payments'] ?? 0);
                 $broughtForward = (float) ($member['brought_forward'] ?? 0);
+                $due = array_key_exists('due', $member)
+                    ? (float) $member['due']
+                    : round(max(0, $grossBill - $billPayments), 2);
 
-                $closingBalance = isset($member['closing_net']) && is_numeric($member['closing_net'])
-                    ? (float) $member['closing_net']
-                    : ($paid + $broughtForward) - $mealCost;
+                // Historical schema name: advance_applied actually stores bill-payment-type payments.
+                $advanceApplied = $billPayments;
+                $netBill = round($grossBill - $advanceApplied, 2);
 
-                $summaryData = $this->onlyExistingColumns($summaryColumns, [
-                    'monthly_closing_id' => $closing->id,
-                    'closing_id' => $closing->id,
-                    'member_id' => $memberId,
-                    'meals' => $meals,
-                    'meal_count' => $meals,
-                    'meal_cost' => $mealCost,
-                    'bill' => $mealCost,
-                    'bill_payments' => $paid,
-                    'paid' => $paid,
-                    'brought_forward' => $broughtForward,
-                    'opening_balance' => $broughtForward,
-                    'closing_balance' => $closingBalance,
-                    'closing_net' => $closingBalance,
-                    'net_balance' => $closingBalance,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                // Final net position after this month's activity.
+                $closingBalance = round(
+                    $broughtForward + $advancePayments + $billPayments - $grossBill,
+                    2
+                );
 
-                MonthlyMemberSummary::unguard();
-                MonthlyMemberSummary::create($summaryData);
-                MonthlyMemberSummary::reguard();
+                $summary = new MonthlyMemberSummary();
+                $summary->mess_id = $messId;
+                $summary->monthly_closing_id = $closing->id;
+                $summary->member_id = $memberId;
+                $summary->total_meals = round($meals, 2);
+                $summary->meal_rate = round($mealRate, 4);
+                $summary->meal_cost = round($mealCost, 2);
+                $summary->fixed_cost_share = round($fixedShare, 2);
+                $summary->guest_meal_charge = round($guestCharge, 2);
+                $summary->gross_bill = round($grossBill, 2);
+                $summary->advance_applied = round($advanceApplied, 2);
+                $summary->net_bill = round($netBill, 2);
+                $summary->payments_received = round($billPayments, 2);
+                $summary->balance_due = round($due, 2);
 
-                if (Schema::hasColumn('members', 'opening_balance')) {
-                    Member::withoutGlobalScopes()
-                        ->whereKey($memberId)
-                        ->update(['opening_balance' => $closingBalance]);
+                // closing_balance was added later and exists on the current model/schema.
+                if (Schema::hasColumn('monthly_member_summaries', 'brought_forward')) {
+                    $summary->brought_forward = round($broughtForward, 2);
                 }
+                if (Schema::hasColumn('monthly_member_summaries', 'closing_balance')) {
+                    $summary->closing_balance = $closingBalance;
+                }
+
+                $summary->save();
             }
 
-            // Notifications are best-effort and must never make a successful close fail.
             try {
                 if (class_exists(\App\Services\NotificationService::class)) {
                     $notificationService = app(\App\Services\NotificationService::class);
@@ -161,8 +154,7 @@ class MonthCloseService
     }
 
     /**
-     * Use the canonical report calculation first. Only use the compatibility
-     * fallback when the report service is unavailable or throws an exception.
+     * Use the canonical report calculation first. Fall back only when necessary.
      */
     protected function resolveReportData(int $messId, int $year, int $month): array
     {
@@ -186,8 +178,8 @@ class MonthCloseService
     }
 
     /**
-     * Compatibility fallback for deployments whose schema is older than the code.
-     * IMPORTANT: this project's members table uses `status`, not `is_active`.
+     * Compatibility fallback for older deployments. The current members schema
+     * uses status='active'/'former', not an is_active column.
      */
     protected function computeDirectReport(int $messId, int $year, int $month): array
     {
@@ -197,14 +189,10 @@ class MonthCloseService
             ->whereMonth('date', $month)
             ->sum('amount');
 
-        $membersQuery = Member::withoutGlobalScopes()
-            ->where('mess_id', $messId);
-
-        // Current members schema uses status='active'; `is_active` does not exist.
+        $membersQuery = Member::withoutGlobalScopes()->where('mess_id', $messId);
         if (Schema::hasColumn('members', 'status')) {
-            $membersQuery->where('status', 'active');
+            $membersQuery->whereIn('status', ['active', 'former']);
         }
-
         $members = $membersQuery->get();
 
         $processedMembers = [];
@@ -227,38 +215,25 @@ class MonthCloseService
                 }
             }
 
-            if (Schema::hasTable('guest_meals')) {
-                $guestColumns = Schema::getColumnListing('guest_meals');
-                $guestCountColumn = in_array('count', $guestColumns, true)
-                    ? 'count'
-                    : (in_array('meals', $guestColumns, true) ? 'meals' : null);
-
-                if ($guestCountColumn) {
-                    $meals += (float) GuestMeal::withoutGlobalScopes()
-                        ->where('member_id', $member->id)
-                        ->whereYear('date', $year)
-                        ->whereMonth('date', $month)
-                        ->sum($guestCountColumn);
-                }
+            $guestTotal = 0.0;
+            if (Schema::hasTable('guest_meals') && in_array('charge_amount', Schema::getColumnListing('guest_meals'), true)) {
+                $guestTotal = (float) GuestMeal::withoutGlobalScopes()
+                    ->where('member_id', $member->id)
+                    ->whereYear('date', $year)
+                    ->whereMonth('date', $month)
+                    ->sum('charge_amount');
             }
 
-            $paymentColumns = Schema::hasTable('payments')
-                ? Schema::getColumnListing('payments')
-                : [];
-            $paymentDateColumn = in_array('date', $paymentColumns, true)
-                ? 'date'
-                : (in_array('paid_at', $paymentColumns, true) ? 'paid_at' : null);
-
             $paid = 0.0;
-            if ($paymentDateColumn) {
+            if (Schema::hasTable('payments') && in_array('date', Schema::getColumnListing('payments'), true)) {
                 $paid = (float) Payment::withoutGlobalScopes()
                     ->where('member_id', $member->id)
-                    ->whereYear($paymentDateColumn, $year)
-                    ->whereMonth($paymentDateColumn, $month)
+                    ->whereYear('date', $year)
+                    ->whereMonth('date', $month)
                     ->sum('amount');
             }
 
-            $broughtForward = (float) ($member->opening_balance ?? 0);
+            $broughtForward = 0.0;
             $totalMeals += $meals;
 
             $processedMembers[] = [
@@ -266,19 +241,23 @@ class MonthCloseService
                 'member_id' => $member->id,
                 'name' => $member->name,
                 'meals' => $meals,
+                'guest_total' => $guestTotal,
                 'paid' => $paid,
                 'bill_payments' => $paid,
+                'advance_payments' => 0.0,
                 'brought_forward' => $broughtForward,
             ];
         }
 
-        $mealRate = $totalMeals > 0 ? $totalBazar / $totalMeals : 0.0;
+        $mealRate = $totalMeals > 0 ? round($totalBazar / $totalMeals, 2) : 0.0;
 
         foreach ($processedMembers as &$member) {
-            $mealCost = $member['meals'] * $mealRate;
+            $mealCost = round($member['meals'] * $mealRate, 2);
+            $grossBill = round($mealCost + $member['guest_total'], 2);
             $member['meal_cost'] = $mealCost;
-            $member['bill'] = $mealCost;
-            $member['closing_net'] = ($member['paid'] + $member['brought_forward']) - $mealCost;
+            $member['fixed_share'] = 0.0;
+            $member['bill'] = $grossBill;
+            $member['due'] = round(max(0.0, $grossBill - $member['bill_payments']), 2);
         }
         unset($member);
 
@@ -289,24 +268,5 @@ class MonthCloseService
             'total_fixed' => 0.0,
             'members' => $processedMembers,
         ];
-    }
-
-    /**
-     * Keep the dynamic-schema protection used by the production deployment.
-     */
-    private function onlyExistingColumns(array $columns, array $values): array
-    {
-        if (empty($columns)) {
-            return $values;
-        }
-
-        $result = [];
-        foreach ($values as $column => $value) {
-            if (in_array($column, $columns, true)) {
-                $result[$column] = $value;
-            }
-        }
-
-        return $result;
     }
 }
