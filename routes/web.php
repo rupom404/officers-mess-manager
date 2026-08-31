@@ -303,3 +303,14 @@ Route::middleware(['auth', 'roles:mess-member', 'password.change'])->group(funct
         Route::get('monthly.xlsx', [MyReportExportController::class, 'monthlyExcel'])->name('monthly.xlsx');
     });
 });
+// TEMPORARY: Reset balances for September (Remove after using)
+Route::get('/admin/force-reset-balances', function () {
+    // Ensure only logged-in users can run this
+    if (!auth()->check()) {
+        return redirect('/login');
+    }
+    
+    $count = \App\Models\Member::withoutGlobalScopes()->update(['opening_balance' => 0.00]);
+    
+    return "SUCCESS! {$count} members' balances have been reset to ৳0.00. <br><br>You can now go back to your app, deactivate the old members, add the new ones, and start September fresh! <br><br><i>(Please delete this route from web.php later for security)</i>";
+});
