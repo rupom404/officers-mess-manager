@@ -305,12 +305,46 @@ Route::middleware(['auth', 'roles:mess-member', 'password.change'])->group(funct
 });
 // TEMPORARY: Reset balances for September (Remove after using)
 Route::get('/admin/force-reset-balances', function () {
-    // Ensure only logged-in users can run this
-    if (!auth()->check()) {
-        return redirect('/login');
+    try {
+        $log = [];
+        
+        // 1. Wipe the running advance/due balances
+        if (\Illuminate\Support\Facades\Schema::hasTable('advance_balances')) {
+            $cleared = \Illuminate\Support\Facades\DB::table('advance_balances')->delete();
+            $log[] = "✅ Cleared {$cleared} records from the advance_balances table.";
+        }
+        
+        // 2. Wipe any static opening balances on the members table (if the column exists)
+        if (\Illuminate\Support\Facades\Schema::hasColumn('members', 'opening_balance')) {
+            $updated = \Illuminate\Support\Facades\DB::table('members')->update(['opening_balance' => 0.00]);
+            $log[] = "✅ Reset opening_balance to 0 for {$updated} members.";
+        }
+
+        // 3. Clear pending settlements (if any exist)
+        if (\Illuminate\Support\Facades\Schema::hasTable('pending_settlements')) {
+            $settlements = \Illuminate\Support\Facades\DB::table('pending_settlements')->delete();
+            $log[] = "✅ Cleared {$settlements} pending settlements.";
+        }
+        
+        $logHtml = implode("<br><br>", $log);
+        
+        return "
+            <div style='font-family: sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px;'>
+                <h2 style='color: #059669;'>SUCCESS! All financial carry-forwards have been wiped.</h2>
+                <p>{$logHtml}</p>
+                <hr style='margin: 20px 0; border: none; border-top: 1px solid #e2e8f0;'>
+                <p>You can now go back to your app, mark the old members as Inactive, add the new ones, and start September fresh!</p>
+                <p style='color: #ef4444; font-size: 12px;'><i>(Please delete this route from web.php and push to GitHub later for security)</i></p>
+            </div>
+        ";
+               
+    } catch (\Throwable $e) {
+        return "
+            <div style='font-family: sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; border: 1px solid #ef4444; border-radius: 10px; background: #fef2f2;'>
+                <h2 style='color: #dc2626;'>ERROR ENCOUNTERED</h2>
+                <p><strong>Message:</strong> " . $e->getMessage() . "</p>
+                <p><strong>File:</strong> " . $e->getFile() . " (Line " . $e->getLine() . ")</p>
+            </div>
+        ";
     }
-    
-    $count = \App\Models\Member::withoutGlobalScopes()->update(['opening_balance' => 0.00]);
-    
-    return "SUCCESS! {$count} members' balances have been reset to ৳0.00. <br><br>You can now go back to your app, deactivate the old members, add the new ones, and start September fresh! <br><br><i>(Please delete this route from web.php later for security)</i>";
 });
