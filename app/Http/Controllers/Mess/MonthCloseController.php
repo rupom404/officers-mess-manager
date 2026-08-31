@@ -31,7 +31,7 @@ class MonthCloseController extends Controller
                 return redirect()->route('mess.closings.show', $existing->id);
             }
         } catch (\Throwable $e) {
-            Log::warning('MonthCloseController check: ' . $e->getMessage());
+            Log::warning('MonthCloseController check existing: ' . $e->getMessage());
         }
 
         $preview = $monthCloseService->preview($messId, $year, $month);
@@ -48,6 +48,16 @@ class MonthCloseController extends Controller
     }
 
     public function store(Request $request, MonthCloseService $monthCloseService): RedirectResponse
+    {
+        return $this->handleClose($request, $monthCloseService);
+    }
+
+    public function trigger(Request $request, MonthCloseService $monthCloseService): RedirectResponse
+    {
+        return $this->handleClose($request, $monthCloseService);
+    }
+
+    protected function handleClose(Request $request, MonthCloseService $monthCloseService): RedirectResponse
     {
         $year = (int) $request->input('year', now()->year);
         $month = (int) $request->input('month', now()->month);

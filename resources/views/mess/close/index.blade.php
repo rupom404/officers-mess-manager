@@ -42,7 +42,7 @@
 
     <!-- Month Close Trigger Form -->
     <div class="pt-2">
-        <form id="close-month-form" method="POST" action="{{ Route::has('mess.close.store') ? route('mess.close.store') : url('/mess/close') }}">
+        <form id="close-month-form" method="POST" action="{{ url('/mess/close') }}">
             @csrf
             
             <input type="hidden" name="year" value="{{ $year }}">

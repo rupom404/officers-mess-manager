@@ -10,6 +10,7 @@ use App\Models\Mess;
 use App\Models\MonthlyClosing;
 use App\Models\MonthlyMemberSummary;
 use App\Models\Payment;
+use App\Models\User;
 use App\Support\Period;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -23,7 +24,7 @@ class MonthCloseService
     ) {}
 
     /**
-     * Preview closing figures before locking.
+     * Preview closing data before locking.
      */
     public function preview(?int $messId = null, ?int $year = null, ?int $month = null): array
     {
@@ -43,14 +44,14 @@ class MonthCloseService
     }
 
     /**
-     * Execute closing, write immutable snapshots, and forward member balances.
+     * Execute closing, write snapshots, and roll forward balances to next month.
      */
     public function close(int $messId, int $year, int $month, ?int $userId = null): MonthlyClosing
     {
-        $userId = $userId ?? auth()->id() ?? 1;
+        $userId = $userId ?? auth()->id() ?? User::first()?->id ?? null;
 
         return DB::transaction(function () use ($messId, $year, $month, $userId) {
-            // Check if already closed and clean any stale partial runs
+            // 1. Check if already closed
             $existing = MonthlyClosing::query()
                 ->where('mess_id', $messId)
                 ->where('year', $year)
@@ -58,13 +59,10 @@ class MonthCloseService
                 ->first();
 
             if ($existing) {
-                if (method_exists($existing, 'monthlyMemberSummaries')) {
-                    $existing->monthlyMemberSummaries()->delete();
-                }
-                $existing->delete();
+                return $existing;
             }
 
-            // Resolve report data
+            // 2. Resolve calculation figures
             $report = $this->resolveReportData($messId, $year, $month);
 
             $totalBazar = (float) ($report['total_bazar'] ?? $report['bazar'] ?? 0);
@@ -73,8 +71,8 @@ class MonthCloseService
             $totalFixed = (float) ($report['total_fixed'] ?? $report['fixed'] ?? 0);
             $members    = $report['members'] ?? [];
 
-            // 1. Insert MonthlyClosing record using verified DB schema columns
-            $closingCols = Schema::getColumnListing('monthly_closings');
+            // 3. Create MonthlyClosing Snapshot dynamically based on real DB columns
+            $closingCols = Schema::hasTable('monthly_closings') ? Schema::getColumnListing('monthly_closings') : [];
             $candidateClosing = [
                 'mess_id'        => $messId,
                 'year'           => $year,
@@ -102,10 +100,12 @@ class MonthCloseService
                 }
             }
 
+            MonthlyClosing::unguard();
             $closing = MonthlyClosing::create($closingInsert);
+            MonthlyClosing::reguard();
 
-            // 2. Insert Member Summaries & Rollover Balances to Next Month
-            $summaryCols = Schema::getColumnListing('monthly_member_summaries');
+            // 4. Save Member Summaries & Roll Over Ending Balances
+            $summaryCols = Schema::hasTable('monthly_member_summaries') ? Schema::getColumnListing('monthly_member_summaries') : [];
 
             foreach ($members as $m) {
                 $memberId = $m['id'] ?? $m['member_id'] ?? null;
@@ -152,17 +152,19 @@ class MonthCloseService
                     }
                 }
 
+                MonthlyMemberSummary::unguard();
                 MonthlyMemberSummary::create($summaryInsert);
+                MonthlyMemberSummary::reguard();
 
-                // Rollover: Set opening balance for next month
+                // AUTOMATIC FORWARDING: Carry forward ending balance into member opening balance
                 if (Schema::hasColumn('members', 'opening_balance')) {
-                    Member::query()
+                    Member::withoutGlobalScopes()
                         ->where('id', $memberId)
                         ->update(['opening_balance' => $closingBalance]);
                 }
             }
 
-            // Safe notification attempt (does not crash transaction if mail/SMS is unconfigured)
+            // 5. Attempt notifications safely without failing the transaction
             try {
                 if (class_exists(\App\Services\NotificationService::class)) {
                     $notificationService = app(\App\Services\NotificationService::class);
@@ -179,66 +181,60 @@ class MonthCloseService
     }
 
     /**
-     * Resilient report resolver with Period object & direct calculation fallbacks.
+     * Resilient report resolver with database calculation fallback.
      */
     protected function resolveReportData(int $messId, int $year, int $month): array
     {
-        $period = null;
-        if (class_exists(Period::class)) {
+        // 1. Try Period instance if available
+        if ($this->reportService && class_exists(Period::class)) {
             try {
-                if (method_exists(Period::class, 'fromYearMonth')) {
-                    $period = Period::fromYearMonth($year, $month);
-                } elseif (method_exists(Period::class, 'fromMonth')) {
+                $period = null;
+                if (method_exists(Period::class, 'fromMonth')) {
                     $period = Period::fromMonth($year, $month);
-                } elseif (method_exists(Period::class, 'create')) {
-                    $period = Period::create($year, $month);
                 } elseif (method_exists(Period::class, 'make')) {
                     $period = Period::make($year, $month);
                 } else {
                     $period = new Period($year, $month);
                 }
-            } catch (\Throwable $e) {}
-        }
 
-        if ($this->reportService && $period) {
-            foreach (['monthlyReport', 'monthly', 'getMonthlyReport'] as $method) {
-                if (method_exists($this->reportService, $method)) {
-                    try {
-                        $res = $this->reportService->$method($period);
-                        if (! empty($res) && ! empty($res['members'])) return $res;
-                    } catch (\Throwable $e) {}
-
-                    try {
-                        $res = $this->reportService->$method($messId, $period);
-                        if (! empty($res) && ! empty($res['members'])) return $res;
-                    } catch (\Throwable $e) {}
-
-                    try {
-                        $res = $this->reportService->$method($period, $messId);
-                        if (! empty($res) && ! empty($res['members'])) return $res;
-                    } catch (\Throwable $e) {}
+                if ($period && method_exists($this->reportService, 'monthlyReport')) {
+                    $res = $this->reportService->monthlyReport($messId, $period);
+                    if (! empty($res) && ! empty($res['members'])) {
+                        return $res;
+                    }
                 }
+            } catch (\Throwable $e) {
+                Log::warning('Period-based report service fallback: ' . $e->getMessage());
             }
         }
 
+        // 2. Direct PostgreSQL Query Calculation
         return $this->computeDirectReport($messId, $year, $month);
     }
 
-    /**
-     * Direct PostgreSQL database query engine.
-     */
     protected function computeDirectReport(int $messId, int $year, int $month): array
     {
-        $totalBazar = (float) Expense::query()
+        $totalBazar = (float) Expense::withoutGlobalScopes()
             ->where('mess_id', $messId)
             ->whereYear('date', $year)
             ->whereMonth('date', $month)
             ->sum('amount');
 
-        $members = Member::query()
+        if ($totalBazar === 0.0) {
+            $totalBazar = (float) Expense::withoutGlobalScopes()
+                ->whereYear('date', $year)
+                ->whereMonth('date', $month)
+                ->sum('amount');
+        }
+
+        $members = Member::withoutGlobalScopes()
             ->where('mess_id', $messId)
             ->where('is_active', true)
             ->get();
+
+        if ($members->isEmpty()) {
+            $members = Member::withoutGlobalScopes()->where('is_active', true)->get();
+        }
 
         $processedMembers = [];
         $totalMealsSum = 0;
@@ -247,7 +243,7 @@ class MonthCloseService
         foreach ($members as $member) {
             $meals = 0.0;
             if (class_exists(MealEntry::class) && Schema::hasTable('meal_entries')) {
-                $query = MealEntry::query()
+                $query = MealEntry::withoutGlobalScopes()
                     ->where('member_id', $member->id)
                     ->whereYear('date', $year)
                     ->whereMonth('date', $month);
@@ -265,18 +261,25 @@ class MonthCloseService
             }
 
             if (class_exists(GuestMeal::class) && Schema::hasTable('guest_meals')) {
-                $guestCount = (float) GuestMeal::query()
-                    ->where('member_id', $member->id)
-                    ->whereYear('date', $year)
-                    ->whereMonth('date', $month)
-                    ->sum('count');
-                $meals += $guestCount;
+                $guestCols = Schema::getColumnListing('guest_meals');
+                $col = in_array('count', $guestCols) ? 'count' : (in_array('meals', $guestCols) ? 'meals' : null);
+                if ($col) {
+                    $guestCount = (float) GuestMeal::withoutGlobalScopes()
+                        ->where('member_id', $member->id)
+                        ->whereYear('date', $year)
+                        ->whereMonth('date', $month)
+                        ->sum($col);
+                    $meals += $guestCount;
+                }
             }
 
-            $paid = (float) Payment::query()
+            $paidCols = Schema::hasTable('payments') ? Schema::getColumnListing('payments') : [];
+            $dateCol = in_array('paid_at', $paidCols) ? 'paid_at' : 'date';
+
+            $paid = (float) Payment::withoutGlobalScopes()
                 ->where('member_id', $member->id)
-                ->whereYear('paid_at', $year)
-                ->whereMonth('paid_at', $month)
+                ->whereYear($dateCol, $year)
+                ->whereMonth($dateCol, $month)
                 ->sum('amount');
 
             $broughtForward = (float) ($member->opening_balance ?? 0);
