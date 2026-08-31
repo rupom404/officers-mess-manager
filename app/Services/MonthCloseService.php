@@ -11,7 +11,6 @@ use App\Models\MonthlyClosing;
 use App\Models\MonthlyMemberSummary;
 use App\Models\Payment;
 use App\Models\User;
-use App\Support\Period;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -95,7 +94,7 @@ class MonthCloseService
 
             $closingInsert = [];
             foreach ($candidateClosing as $col => $val) {
-                if (in_array($col, $closingCols)) {
+                if (in_array($col, $closingCols, true)) {
                     $closingInsert[$col] = $val;
                 }
             }
@@ -147,7 +146,7 @@ class MonthCloseService
 
                 $summaryInsert = [];
                 foreach ($candidateSummary as $col => $val) {
-                    if (in_array($col, $summaryCols)) {
+                    if (in_array($col, $summaryCols, true)) {
                         $summaryInsert[$col] = $val;
                     }
                 }
@@ -181,34 +180,36 @@ class MonthCloseService
     }
 
     /**
-     * Resilient report resolver with database calculation fallback.
+     * Resolve month-close figures through the same optimized, cached report
+     * calculation used by the reports and bill preview pages.
+     *
+     * The previous implementation called ReportService::monthlyReport() with
+     * (messId, Period), but the actual method signature is (year, month).
+     * That TypeError was caught silently and every request fell through to a
+     * much more expensive N+1 direct-query fallback. On larger datasets this
+     * could make /mess/close intermittently return HTTP 500/time out.
      */
     protected function resolveReportData(int $messId, int $year, int $month): array
     {
-        // 1. Try Period instance if available
-        if ($this->reportService && class_exists(Period::class)) {
+        if ($this->reportService && method_exists($this->reportService, 'monthlyReport')) {
             try {
-                $period = null;
-                if (method_exists(Period::class, 'fromMonth')) {
-                    $period = Period::fromMonth($year, $month);
-                } elseif (method_exists(Period::class, 'make')) {
-                    $period = Period::make($year, $month);
-                } else {
-                    $period = new Period($year, $month);
-                }
+                // ReportService resolves the active mess itself and uses the
+                // cached BillPreviewService for open months.
+                $report = $this->reportService->monthlyReport($year, $month);
 
-                if ($period && method_exists($this->reportService, 'monthlyReport')) {
-                    $res = $this->reportService->monthlyReport($messId, $period);
-                    if (! empty($res) && ! empty($res['members'])) {
-                        return $res;
-                    }
+                if (is_array($report) && array_key_exists('members', $report)) {
+                    return $report;
                 }
             } catch (\Throwable $e) {
-                Log::warning('Period-based report service fallback: ' . $e->getMessage());
+                Log::warning('Month close report service fallback: ' . $e->getMessage(), [
+                    'mess_id' => $messId,
+                    'year' => $year,
+                    'month' => $month,
+                ]);
             }
         }
 
-        // 2. Direct PostgreSQL Query Calculation
+        // Last-resort compatibility fallback for an unavailable report service.
         return $this->computeDirectReport($messId, $year, $month);
     }
 
@@ -248,11 +249,11 @@ class MonthCloseService
                     ->whereYear('date', $year)
                     ->whereMonth('date', $month);
 
-                if (in_array('count', $entryCols)) {
+                if (in_array('count', $entryCols, true)) {
                     $meals = (float) $query->sum('count');
-                } elseif (in_array('total_meals', $entryCols)) {
+                } elseif (in_array('total_meals', $entryCols, true)) {
                     $meals = (float) $query->sum('total_meals');
-                } elseif (in_array('meals', $entryCols)) {
+                } elseif (in_array('meals', $entryCols, true)) {
                     $meals = (float) $query->sum('meals');
                 } else {
                     $entries = $query->get();
@@ -262,7 +263,7 @@ class MonthCloseService
 
             if (class_exists(GuestMeal::class) && Schema::hasTable('guest_meals')) {
                 $guestCols = Schema::getColumnListing('guest_meals');
-                $col = in_array('count', $guestCols) ? 'count' : (in_array('meals', $guestCols) ? 'meals' : null);
+                $col = in_array('count', $guestCols, true) ? 'count' : (in_array('meals', $guestCols, true) ? 'meals' : null);
                 if ($col) {
                     $guestCount = (float) GuestMeal::withoutGlobalScopes()
                         ->where('member_id', $member->id)
@@ -274,7 +275,7 @@ class MonthCloseService
             }
 
             $paidCols = Schema::hasTable('payments') ? Schema::getColumnListing('payments') : [];
-            $dateCol = in_array('paid_at', $paidCols) ? 'paid_at' : 'date';
+            $dateCol = in_array('paid_at', $paidCols, true) ? 'paid_at' : 'date';
 
             $paid = (float) Payment::withoutGlobalScopes()
                 ->where('member_id', $member->id)
