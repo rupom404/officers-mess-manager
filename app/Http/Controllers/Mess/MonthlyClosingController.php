@@ -8,6 +8,7 @@ use App\Models\Member;
 use App\Models\Mess;
 use App\Models\MonthlyClosing;
 use App\Support\MemberStatus;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
@@ -50,9 +51,6 @@ class MonthlyClosingController extends Controller
             $summaries = collect();
         }
 
-        // Active members are shown so the manager can deliberately choose which
-        // members are leaving when beginning the next month. This does not modify
-        // anything until the explicit "Start next month" confirmation is sent.
         $activeMembers = Member::query()
             ->where('mess_id', Mess::activeId() ?? 1)
             ->where('status', MemberStatus::ACTIVE)
@@ -70,11 +68,8 @@ class MonthlyClosingController extends Controller
 
     /**
      * Start a fresh operating month without deleting historical data.
-     *
-     * This is deliberately separate from month closing: the previous month
-     * stays locked and immutable, while the new month starts with zero net
-     * opening balances. Selected outgoing members become former as of the
-     * last day of the closed month. New members can then be added normally.
+     * The previous month remains locked; current running credit/debt is reset
+     * to zero because the manager has confirmed it was settled manually.
      */
     public function startNextMonth(Request $request, $closing)
     {
@@ -92,12 +87,12 @@ class MonthlyClosingController extends Controller
         $retiringIds = collect($request->input('retiring_member_ids', []))
             ->map(fn ($id) => (int) $id)
             ->filter()
+            ->unique()
             ->values();
 
-        DB::transaction(function () use ($messId, $closing, $next, $retiringIds) {
-            // Explicitly reset every active member's running balance because the
-            // manager has confirmed that old dues/credits have been settled by
-            // hand. Historical August snapshots are untouched.
+        DB::transaction(function () use ($messId, $next, $retiringIds) {
+            // One-time September reset: preserve August history, but begin the
+            // new operating cycle with zero opening credit/debt.
             AdvanceBalance::query()
                 ->where('mess_id', $messId)
                 ->whereHas('member', fn ($q) => $q->where('status', MemberStatus::ACTIVE))
