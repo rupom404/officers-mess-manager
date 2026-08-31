@@ -2,28 +2,28 @@
 
 namespace App\Services;
 
-use App\Models\Expense;
-use App\Models\GuestMeal;
-use App\Models\MealEntry;
+use App\Models\AdvanceBalance;
 use App\Models\Member;
 use App\Models\Mess;
 use App\Models\MonthlyClosing;
 use App\Models\MonthlyMemberSummary;
-use App\Models\Payment;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 
 class MonthCloseService
 {
     public function __construct(
-        protected ?ReportService $reportService = null,
-        protected ?AdvanceBalanceService $advanceBalanceService = null,
+        protected BillPreviewService $billPreview,
     ) {}
 
     /**
-     * Preview the exact figures that will be frozen by month close.
+     * Preview the exact figures shown on the live Monthly Report.
+     *
+     * Closing must use the canonical BillPreviewService so there is only one
+     * calculation engine for an open month. The cache is explicitly invalidated
+     * before both preview and close to prevent stale payment/meal values from
+     * being frozen into the snapshot.
      */
     public function preview(?int $messId = null, ?int $year = null, ?int $month = null): array
     {
@@ -31,23 +31,18 @@ class MonthCloseService
         $year = $year ?? now()->year;
         $month = $month ?? now()->month;
 
-        $report = $this->resolveReportData($messId, $year, $month);
-
-        return [
-            'total_bazar' => (float) ($report['total_bazar'] ?? $report['bazar'] ?? 0),
-            'total_meals' => (float) ($report['total_meals'] ?? $report['meals'] ?? 0),
-            'meal_rate' => (float) ($report['meal_rate'] ?? 0),
-            'total_fixed' => (float) ($report['total_fixed'] ?? $report['fixed'] ?? 0),
-            'members' => $report['members'] ?? [],
-        ];
+        return $this->freshReport($year, $month);
     }
 
     /**
-     * Execute month closing atomically and persist the immutable monthly snapshot.
+     * Freeze the exact open-month Monthly Report values into an immutable snapshot.
      *
-     * The snapshot is a frozen copy of the Monthly Report values. In particular,
-     * brought_forward is preserved and closing_balance is the final signed amount
-     * that becomes the next month's opening position.
+     * Accounting rule:
+     *   closing_balance = brought_forward + advance_payments
+     *                    + bill_payments - gross_bill
+     *
+     * `advance_applied` is a legacy snapshot column name and stores the
+     * bill-payment amount for compatibility with ReportService.
      */
     public function close(int $messId, int $year, int $month, ?int $userId = null): MonthlyClosing
     {
@@ -64,52 +59,40 @@ class MonthCloseService
                 return $existing;
             }
 
-            $report = $this->resolveReportData($messId, $year, $month);
-
-            $totalBazar = (float) ($report['total_bazar'] ?? $report['bazar'] ?? 0);
-            $totalMeals = (float) ($report['total_meals'] ?? $report['meals'] ?? 0);
-            $mealRate = (float) ($report['meal_rate'] ?? ($totalMeals > 0 ? $totalBazar / $totalMeals : 0));
-            $totalFixed = (float) ($report['total_fixed'] ?? $report['fixed'] ?? 0);
-            $members = $report['members'] ?? [];
+            // Always invalidate first: payments/meals can change while the
+            // report cache is still warm. A close must never freeze stale data.
+            $report = $this->freshReport($year, $month);
 
             $closing = new MonthlyClosing();
             $closing->mess_id = $messId;
             $closing->year = $year;
             $closing->month = $month;
-            $closing->total_bazar = round($totalBazar, 2);
-            $closing->total_fixed_expense = round($totalFixed, 2);
-            $closing->total_meals = round($totalMeals, 2);
-            $closing->meal_rate = round($mealRate, 4);
-            $closing->member_count = count($members);
+            $closing->total_bazar = round((float) ($report['total_bazar'] ?? 0), 2);
+            $closing->total_fixed_expense = round((float) ($report['total_fixed'] ?? 0), 2);
+            $closing->total_meals = round((float) ($report['total_meals'] ?? 0), 2);
+            $closing->meal_rate = round((float) ($report['meal_rate'] ?? 0), 4);
+            $closing->member_count = count($report['members'] ?? []);
             $closing->closed_at = now();
             $closing->closed_by = $userId;
             $closing->status = 'closed';
             $closing->save();
 
-            foreach ($members as $member) {
-                $memberId = $member['member_id'] ?? $member['id'] ?? null;
-                if (! $memberId) {
+            foreach (($report['members'] ?? []) as $member) {
+                $memberId = (int) ($member['member_id'] ?? 0);
+                if ($memberId <= 0) {
                     continue;
                 }
 
-                $meals = (float) ($member['meals'] ?? $member['total_meals'] ?? 0);
+                $meals = (float) ($member['meals'] ?? 0);
                 $mealCost = (float) ($member['meal_cost'] ?? 0);
-                $fixedShare = (float) ($member['fixed_share'] ?? $member['fixed_cost_share'] ?? 0);
-                $guestCharge = (float) ($member['guest_total'] ?? $member['guest_meal_charge'] ?? 0);
-                $grossBill = (float) ($member['bill'] ?? $member['gross_bill'] ?? ($mealCost + $fixedShare + $guestCharge));
-                $billPayments = (float) ($member['bill_payments'] ?? $member['payments_received'] ?? 0);
+                $fixedShare = (float) ($member['fixed_share'] ?? 0);
+                $guestCharge = (float) ($member['guest_total'] ?? 0);
+                $grossBill = (float) ($member['bill'] ?? ($mealCost + $fixedShare + $guestCharge));
+                $billPayments = (float) ($member['bill_payments'] ?? 0);
                 $advancePayments = (float) ($member['advance_payments'] ?? 0);
                 $broughtForward = (float) ($member['brought_forward'] ?? 0);
-                $due = array_key_exists('due', $member)
-                    ? (float) $member['due']
-                    : round(max(0, $grossBill - $billPayments), 2);
+                $due = (float) ($member['due'] ?? 0);
 
-                // Historical column name: advance_applied stores bill payments.
-                $advanceApplied = $billPayments;
-                $netBill = round($grossBill - $advanceApplied, 2);
-
-                // Signed final position. This is the value that must become
-                // next month's brought-forward amount.
                 $closingBalance = round(
                     $broughtForward + $advancePayments + $billPayments - $grossBill,
                     2
@@ -120,50 +103,64 @@ class MonthCloseService
                 $summary->monthly_closing_id = $closing->id;
                 $summary->member_id = $memberId;
                 $summary->total_meals = round($meals, 2);
-                $summary->meal_rate = round($mealRate, 4);
+                $summary->meal_rate = round((float) ($report['meal_rate'] ?? 0), 4);
                 $summary->meal_cost = round($mealCost, 2);
                 $summary->fixed_cost_share = round($fixedShare, 2);
                 $summary->guest_meal_charge = round($guestCharge, 2);
                 $summary->gross_bill = round($grossBill, 2);
-                $summary->advance_applied = round($advanceApplied, 2);
-                $summary->net_bill = round($netBill, 2);
+
+                // Legacy name: this column is surfaced by ReportService as
+                // `bill_payments` and therefore must equal this month's bill payments.
+                $summary->advance_applied = round($billPayments, 2);
+                $summary->net_bill = round($grossBill - $billPayments, 2);
                 $summary->payments_received = round($billPayments, 2);
                 $summary->balance_due = round($due, 2);
 
-                if (Schema::hasColumn('monthly_member_summaries', 'brought_forward')) {
+                if (\Illuminate\Support\Facades\Schema::hasColumn('monthly_member_summaries', 'brought_forward')) {
                     $summary->brought_forward = round($broughtForward, 2);
                 }
-                if (Schema::hasColumn('monthly_member_summaries', 'closing_balance')) {
+                if (\Illuminate\Support\Facades\Schema::hasColumn('monthly_member_summaries', 'closing_balance')) {
                     $summary->closing_balance = $closingBalance;
                 }
 
                 $summary->save();
 
-                // Freeze the closing net into the running balance used by the
-                // next month's BillPreviewService. Before close, the running
-                // signed net is opening position + this month's advance deposits;
-                // bill payments and the current bill have not yet been reflected
-                // in advance_balances. Carry only the delta, then normalize any
-                // simultaneous credit/debt into one signed position.
-                if ($this->advanceBalanceService) {
-                    $running = \App\Models\AdvanceBalance::query()
-                        ->where('member_id', $memberId)
-                        ->lockForUpdate()
-                        ->first();
+                // Carry the frozen signed closing position into the running balance
+                // used as next month's brought-forward value.
+                $balance = AdvanceBalance::query()
+                    ->where('member_id', $memberId)
+                    ->first();
 
-                    $currentNet = $running
-                        ? round((float) $running->balance - (float) $running->due_balance, 2)
-                        : 0.0;
-
-                    $delta = round($closingBalance - $currentNet, 2);
-                    if (abs($delta) >= 0.005) {
-                        $this->advanceBalanceService->carryForward(
-                            $memberId,
-                            number_format($delta, 2, '.', '')
-                        );
+                if ($closingBalance >= 0) {
+                    if ($balance) {
+                        $balance->balance = number_format($closingBalance, 2, '.', '');
+                        $balance->due_balance = '0.00';
+                        $balance->last_updated_at = now();
+                        $balance->save();
+                    } else {
+                        AdvanceBalance::create([
+                            'mess_id' => $messId,
+                            'member_id' => $memberId,
+                            'balance' => number_format($closingBalance, 2, '.', ''),
+                            'due_balance' => '0.00',
+                            'last_updated_at' => now(),
+                        ]);
                     }
-
-                    $this->advanceBalanceService->settle($memberId);
+                } else {
+                    if ($balance) {
+                        $balance->balance = '0.00';
+                        $balance->due_balance = number_format(abs($closingBalance), 2, '.', '');
+                        $balance->last_updated_at = now();
+                        $balance->save();
+                    } else {
+                        AdvanceBalance::create([
+                            'mess_id' => $messId,
+                            'member_id' => $memberId,
+                            'balance' => '0.00',
+                            'due_balance' => number_format(abs($closingBalance), 2, '.', ''),
+                            'last_updated_at' => now(),
+                        ]);
+                    }
                 }
             }
 
@@ -183,113 +180,12 @@ class MonthCloseService
     }
 
     /**
-     * Use the canonical report calculation first. Fall back only when necessary.
+     * Get a fresh canonical live report. Closed months never reach this method
+     * from MonthCloseController because closing is only allowed once.
      */
-    protected function resolveReportData(int $messId, int $year, int $month): array
+    protected function freshReport(int $year, int $month): array
     {
-        if ($this->reportService && method_exists($this->reportService, 'monthlyReport')) {
-            try {
-                $report = $this->reportService->monthlyReport($year, $month);
-                if (is_array($report) && array_key_exists('members', $report)) {
-                    return $report;
-                }
-            } catch (\Throwable $e) {
-                Log::warning('Month close report service fallback: '.$e->getMessage(), [
-                    'mess_id' => $messId,
-                    'year' => $year,
-                    'month' => $month,
-                ]);
-            }
-        }
-
-        return $this->computeDirectReport($messId, $year, $month);
-    }
-
-    /**
-     * Compatibility fallback for older deployments.
-     */
-    protected function computeDirectReport(int $messId, int $year, int $month): array
-    {
-        $totalBazar = (float) Expense::withoutGlobalScopes()
-            ->where('mess_id', $messId)
-            ->whereYear('date', $year)
-            ->whereMonth('date', $month)
-            ->sum('amount');
-
-        $membersQuery = Member::withoutGlobalScopes()->where('mess_id', $messId);
-        if (Schema::hasColumn('members', 'status')) {
-            $membersQuery->whereIn('status', ['active', 'former']);
-        }
-        $members = $membersQuery->get();
-
-        $processedMembers = [];
-        $totalMeals = 0.0;
-
-        foreach ($members as $member) {
-            $meals = 0.0;
-            if (Schema::hasTable('meal_entries')) {
-                $entries = MealEntry::withoutGlobalScopes()
-                    ->where('member_id', $member->id)
-                    ->whereYear('date', $year)
-                    ->whereMonth('date', $month)
-                    ->get(['breakfast', 'lunch', 'dinner']);
-                foreach ($entries as $entry) {
-                    $meals += ($entry->breakfast ? 0.5 : 0)
-                        + ($entry->lunch ? 1.0 : 0)
-                        + ($entry->dinner ? 1.0 : 0);
-                }
-            }
-
-            $guestTotal = 0.0;
-            if (Schema::hasTable('guest_meals') && in_array('charge_amount', Schema::getColumnListing('guest_meals'), true)) {
-                $guestTotal = (float) GuestMeal::withoutGlobalScopes()
-                    ->where('member_id', $member->id)
-                    ->whereYear('date', $year)
-                    ->whereMonth('date', $month)
-                    ->sum('charge_amount');
-            }
-
-            $paid = 0.0;
-            if (Schema::hasTable('payments') && in_array('date', Schema::getColumnListing('payments'), true)) {
-                $paid = (float) Payment::withoutGlobalScopes()
-                    ->where('member_id', $member->id)
-                    ->whereYear('date', $year)
-                    ->whereMonth('date', $month)
-                    ->sum('amount');
-            }
-
-            $totalMeals += $meals;
-            $processedMembers[] = [
-                'id' => $member->id,
-                'member_id' => $member->id,
-                'name' => $member->name,
-                'meals' => $meals,
-                'guest_total' => $guestTotal,
-                'paid' => $paid,
-                'bill_payments' => $paid,
-                'advance_payments' => 0.0,
-                'brought_forward' => 0.0,
-            ];
-        }
-
-        $mealRate = $totalMeals > 0 ? round($totalBazar / $totalMeals, 2) : 0.0;
-
-        foreach ($processedMembers as &$member) {
-            $mealCost = round($member['meals'] * $mealRate, 2);
-            $grossBill = round($mealCost + $member['guest_total'], 2);
-            $member['meal_cost'] = $mealCost;
-            $member['fixed_share'] = 0.0;
-            $member['bill'] = $grossBill;
-            $member['due'] = round(max(0.0, $grossBill - $member['bill_payments']), 2);
-        }
-        unset($member);
-
-        return [
-            'total_bazar' => $totalBazar,
-            'total_meals' => $totalMeals,
-            'meal_rate' => $mealRate,
-            'total_fixed' => 0.0,
-            'members' => $processedMembers,
-        ];
+        $this->billPreview->invalidate($year, $month);
+        return $this->billPreview->preview($year, $month);
     }
 }
