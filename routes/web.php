@@ -303,40 +303,6 @@ Route::middleware(['auth', 'roles:mess-member', 'password.change'])->group(funct
         Route::get('monthly.xlsx', [MyReportExportController::class, 'monthlyExcel'])->name('monthly.xlsx');
     });
 });
-// TEMPORARY: Purge empty ghost records and force-delete stuck members
-Route::get('/admin/purge-ghost-records', function () {
-    if (!auth()->check()) {
-        return redirect('/login');
-    }
-
-    $messages = [];
-
-    // 1. Delete "zero" meal entries that block permanent deletion
-    if (class_exists(\App\Models\MealEntry::class)) {
-        $query = \App\Models\MealEntry::query();
-        $cols = \Illuminate\Support\Facades\Schema::getColumnListing('meal_entries');
-        
-        if (in_array('total_meals', $cols)) {
-            $query->where('total_meals', '<=', 0);
-        } elseif (in_array('count', $cols)) {
-            $query->where('count', '<=', 0);
-        } else {
-            $query->where(function($q) {
-                $q->where('breakfast', 0)->orWhereNull('breakfast');
-            })->where(function($q) {
-                $q->where('lunch', 0)->orWhereNull('lunch');
-            })->where(function($q) {
-                $q->where('dinner', 0)->orWhereNull('dinner');
-            });
-        }
-        
-        try {
-            $deletedMeals = $query->delete();
-            $messages[] = "✅ Purged {$deletedMeals} empty ghost meal records.";
-        } catch (\Throwable $e) {
-            $messages[] = "⚠️ Could not purge meals: " . $e->getMessage();
-        }
-    }
 // TEMPORARY: Nuke a specific ghost member by name
 Route::get('/admin/nuke-member/{name}', function ($name) {
     if (!auth()->check()) {
