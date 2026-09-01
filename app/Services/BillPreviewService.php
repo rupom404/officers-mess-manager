@@ -18,14 +18,10 @@ use App\Support\MemberStatus;
 use App\Support\PaymentType;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 class BillPreviewService
 {
-    /**
-     * Compute (and cache) the bill preview for a given year/month.
-     *
-     * @return array{year:int,month:int,total_bazar:float,total_meals:float,meal_rate:float,total_fixed:float,days_in_month:int,members:array<int,array<string,mixed>>}
-     */
     public function preview(int $year, int $month): array
     {
         $messId = Mess::activeId();
@@ -58,10 +54,6 @@ class BillPreviewService
         return "bill-preview:v2:{$messId}:{$year}-".str_pad((string) $month, 2, '0', STR_PAD_LEFT);
     }
 
-    /**
-     * Forget the cached preview for a given (year, month) for the active mess.
-     * Used by month-close and corrections so the next read recomputes.
-     */
     public function invalidate(int $year, int $month): void
     {
         $messId = Mess::activeId();
@@ -123,7 +115,6 @@ class BillPreviewService
 
         $memberIds = $members->pluck('id')->all();
 
-        // Pre-load closed dates (mess closed) and disabled dates (per member)
         $closedDates = MessClosedDay::query()
             ->where('mess_id', $messId)
             ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
@@ -150,21 +141,14 @@ class BillPreviewService
         $paymentsByMember = $this->paymentsByMember($memberIds, $start, $end);
         $advanceBalances = $this->advanceBalances($memberIds);
 
-        // Meal-rate denominator = total meals actually eaten this month by ALL
-        // loaded members (active + former). Every meal eaten consumed groceries,
-        // so the total bazar cost must be spread across every meal — not just
-        // those of members who were "fully present" for the whole month. The old
-        // eligibleForDenominator() filter (strict joining/leaving-date bounds)
-        // zeroed the rate whenever the only eaters carried a leaving_date, which
-        // is why meal_rate showed ৳0.00 across reports + dashboard despite data.
+        // Incorporate guest meals natively into the mess total meals
         $totalMeals = 0.0;
         foreach ($members as $member) {
-            $totalMeals += $mealTotalsByMember[$member->id] ?? 0.0;
+            $totalMeals += ($mealTotalsByMember[$member->id] ?? 0.0) + ($guestTotalsByMember[$member->id] ?? 0.0);
         }
 
         $mealRate = $totalMeals > 0 ? round($totalBazar / $totalMeals, 2) : 0.0;
 
-        // Pre-compute disabled day counts per member for activeDaysForMember
         $disabledDayCountByMember = [];
         foreach ($memberIds as $mid) {
             $disabledDayCountByMember[$mid] = count($disabledDaysByMember[$mid] ?? []);
@@ -172,8 +156,10 @@ class BillPreviewService
 
         $rows = [];
         foreach ($members as $member) {
-            $meals = $mealTotalsByMember[$member->id] ?? 0.0;
-            $guestTotal = $guestTotalsByMember[$member->id] ?? 0.0;
+            $regMeals = $mealTotalsByMember[$member->id] ?? 0.0;
+            $gstMeals = $guestTotalsByMember[$member->id] ?? 0.0;
+            $meals = $regMeals + $gstMeals; // Host + Guest total combined
+            
             $mealCost = round($meals * $mealRate, 2);
 
             $activeDays = $this->activeDaysForMember($member, $start, $end, $closedDatesSet, $disabledDayCountByMember[$member->id] ?? 0);
@@ -181,6 +167,7 @@ class BillPreviewService
                 ? round($totalFixed * ($activeDays / $daysInMonth), 2)
                 : 0.0;
 
+            $guestTotal = 0.0; // Nullify isolated flat cash charge to prevent double billing
             $bill = round($mealCost + $fixedShare + $guestTotal, 2);
 
             $billPayments = $paymentsByMember[$member->id]['bill_payments'] ?? 0.0;
@@ -188,22 +175,7 @@ class BillPreviewService
             $dueBalance = $advanceBalances[$member->id]['due_balance'] ?? 0.0;
             $advancePayments = $paymentsByMember[$member->id]['advance_payments'] ?? 0.0;
 
-            // Brought forward = opening net carried in from the prior month.
-            // During an OPEN month the only things that mutate advance_balances
-            // are advance deposits and manual adjustments (close-time mutations
-            // have not run for this month). So opening net = current net minus
-            // this month's deposits. CONTEXT: brought_forward = (balance −
-            // due_balance) − advance_payments.
             $broughtForward = round(($advanceBalance - $dueBalance) - $advancePayments, 2);
-
-            // Advance offsets the live bill (D-07): after bill payments are
-            // counted, any remaining bill is covered first by the member's
-            // running advance credit. `advanceApplied` is the portion of that
-            // credit consumed this month — capped at what's still owed after
-            // payments AND at the available credit, so it never over-charges.
-            // `due` is therefore the amount still owed AFTER both payments and
-            // advance; MonthCloseService::close() consumes advanceApplied for
-            // real against advance_balances.balance so it is not double-counted.
             $owedAfterPayments = max(0.0, $bill - $billPayments);
             $advanceApplied = min($advanceBalance, $owedAfterPayments);
             $due = round($owedAfterPayments - $advanceApplied, 2);
@@ -242,10 +214,6 @@ class BillPreviewService
         ];
     }
 
-    /**
-     * @param  array<int, string>  $closedDatesSet  [date => true]
-     * @param  array<int, array<int, string>>  $disabledDaysByMember  [member_id => [date, ...]]
-     */
     private function mealTotals(array $memberIds, Carbon $start, Carbon $end, array $closedDatesSet = [], array $disabledDaysByMember = []): array
     {
         if (empty($memberIds)) {
@@ -260,11 +228,9 @@ class BillPreviewService
         $totals = array_fill_keys($memberIds, 0.0);
         foreach ($entries as $entry) {
             $dateStr = $entry->date->toDateString();
-            // Skip entries on mess-closed dates
             if (isset($closedDatesSet[$dateStr])) {
                 continue;
             }
-            // Skip entries on member-disabled dates
             $memberDisabled = $disabledDaysByMember[$entry->member_id] ?? [];
             if (in_array($dateStr, $memberDisabled, true)) {
                 continue;
@@ -288,18 +254,21 @@ class BillPreviewService
 
     private function guestTotals(array $memberIds, Carbon $start, Carbon $end): array
     {
-        if (empty($memberIds)) {
+        if (empty($memberIds) || !class_exists(GuestMeal::class) || !Schema::hasTable('guest_meals')) {
             return [];
         }
+
+        $cols = Schema::getColumnListing('guest_meals');
+        $col = in_array('count', $cols) ? 'count' : (in_array('meals', $cols) ? 'meals' : 'charge_amount');
 
         $rows = GuestMeal::query()
             ->whereIn('member_id', $memberIds)
             ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
-            ->get(['member_id', 'charge_amount']);
+            ->get(['member_id', $col]);
 
         $totals = array_fill_keys($memberIds, 0.0);
         foreach ($rows as $row) {
-            $totals[$row->member_id] = ($totals[$row->member_id] ?? 0.0) + (float) $row->charge_amount;
+            $totals[$row->member_id] = ($totals[$row->member_id] ?? 0.0) + (float) $row->{$col};
         }
 
         return $totals;
@@ -356,9 +325,6 @@ class BillPreviewService
         return $out;
     }
 
-    /**
-     * @param  array<int, string>  $closedDatesSet  [date => true]
-     */
     private function activeDaysForMember(Member $member, Carbon $start, Carbon $end, array $closedDatesSet = [], int $disabledDayCount = 0): int
     {
         $memberStart = $member->joining_date && $member->joining_date->gt($start)
@@ -375,7 +341,6 @@ class BillPreviewService
 
         $activeDays = (int) $memberStart->diffInDays($memberEnd) + 1;
 
-        // Subtract mess-closed days that fall within this member's active period
         if (! empty($closedDatesSet)) {
             $cursor = $memberStart->copy();
             while ($cursor <= $memberEnd) {
@@ -386,7 +351,6 @@ class BillPreviewService
             }
         }
 
-        // Subtract member-disabled days
         return max(0, $activeDays - $disabledDayCount);
     }
 }

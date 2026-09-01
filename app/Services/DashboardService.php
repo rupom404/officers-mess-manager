@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Expense;
 use App\Models\ExpenseCategory;
+use App\Models\GuestMeal;
 use App\Models\MealEntry;
 use App\Models\MealOffRequest;
 use App\Models\Member;
@@ -17,31 +18,8 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
-/**
- * DashboardService — manager-side dashboard (DASH-01/02/03).
- *
- *  - pendingMealOffCount(): pending MealOffRequest count for the alert banner.
- *  - managerCards(): DASH-01 cards. Bill-derived cards (meal_rate,
- *    total_member_balance) reuse the bill-preview cache via BillPreviewService::preview()
- *    (NO new key). Count-based cards (total_members, today_meals, monthly_expenses)
- *    use the composite key dash:counts:{mess_id}:{YYYY}-{MM} (1h TTL).
- *  - mealTrend/expenseTrend/paymentTrend(): D-05/D-06/D-07 series with D-08
- *    auto-bucketing (day ≤ 60d / week ≤ 365d / month otherwise).
- *
- * Cache invalidation: the AppServiceProvider::invalidateForModel() listener
- * (extended in Plan 04-03) forgets dash:counts:{mess_id}:{YYYY}-{MM} on the
- * SAME saved/deleted events that already forget the bill-preview key —
- * preserving the < 2s refresh contract (DASH-05). All cache keys are scoped
- * by Mess::activeId() so cross-mess bleed is impossible (T-04-03-01).
- *
- * Open Question #3 LOCKED: "Today's Meals" + Meal Trend EXCLUDE guest meals
- * (mirrors BillPreviewService::mealTotals() — only regular B/L/D booleans via
- * MealType::value(), not guest_meals.charge_amount).
- *
- * Open Question #5 LOCKED: "Monthly Expenses" card = total bazar + fixed.
- * The Expense Trend chart (D-06) stays bazar-only — separate decision.
- */
 class DashboardService
 {
     public function __construct(
@@ -49,11 +27,6 @@ class DashboardService
         private readonly ChartBucketingService $bucketing = new ChartBucketingService,
     ) {}
 
-    /**
-     * Pending MealOffRequest count for the DASH-03 alert banner.
-     * Not cached — a single COUNT(*) is cheap and the banner is the one
-     * element the manager most wants to be live.
-     */
     public function pendingMealOffCount(): int
     {
         $messId = Mess::activeId();
@@ -67,34 +40,6 @@ class DashboardService
             ->count();
     }
 
-    /**
-     * The manager stat cards.
-     *
-     * Bill-derived cards (meal_rate, total_meals, total_credit, total_dues,
-     * total_member_balance) reuse the bill-preview cache via
-     * BillPreviewService::preview() (NO new key). Count-based cards
-     * (total_members, today_meals, monthly_expenses) use the composite key
-     * dash:counts:{mess_id}:{YYYY}-{MM} (1h TTL).
-     *
-     * total_credit = Σ of members' NET positive balances (money members
-     *   truly prepaid AFTER their carried dues net out; mess holds it).
-     * total_dues   = Σ of members' NET negative balances, as positive
-     *   (money members truly still owe AFTER their advance nets out).
-     * Each member is netted (balance − due_balance) BEFORE bucketing, so a
-     * member is never counted in both — mirrors AdvanceBalance::netBalance().
-     * total_member_balance (net) = total_credit − total_dues.
-     *
-     * @return array{
-     *     total_members:int,
-     *     today_meals:float,
-     *     total_meals:float,
-     *     monthly_expenses:float,
-     *     meal_rate:float,
-     *     total_credit:float,
-     *     total_dues:float,
-     *     total_member_balance:float,
-     * }
-     */
     public function managerCards(): array
     {
         $messId = Mess::activeId();
@@ -131,24 +76,15 @@ class DashboardService
             ];
         });
 
-        // Bill-derived cards reuse the bill-preview:{mess}:{YYYY}-{MM} cache
-        // (no new key) — see BillPreviewService::preview().
         $preview = $this->preview->preview($now->year, $now->month);
         $members = $preview['members'] ?? [];
 
-        // Net each member FIRST (balance − due_balance), then bucket into
-        // credit vs dues — never sum the gross columns separately. A member
-        // who prepaid ৳6,000 but owes ৳4,000 is +৳2,000 net credit, NOT
-        // ৳6,000 credit AND ৳4,000 dues. Mirrors AdvanceBalance::netBalance()'s
-        // contract: "a member is never displayed as simultaneously owing and
-        // being owed". The net total (total_member_balance) is unchanged; only
-        // the previously double-counted gross split is corrected.
         $netByMember = collect($members)->map(
             fn ($m) => (float) ($m['advance_balance'] ?? 0) - (float) ($m['due_balance'] ?? 0)
         );
 
-        $totalCredit = (float) $netByMember->sum(fn ($net) => max(0.0, $net));    // Σ positive nets = prepaid by members
-        $totalDues = (float) $netByMember->sum(fn ($net) => abs(min(0.0, $net))); // Σ negative nets (abs) = owed by members
+        $totalCredit = (float) $netByMember->sum(fn ($net) => max(0.0, $net));
+        $totalDues = (float) $netByMember->sum(fn ($net) => abs(min(0.0, $net)));
 
         return [
             'total_members' => $counts['total_members'],
@@ -162,13 +98,6 @@ class DashboardService
         ];
     }
 
-    /**
-     * Meal Trend (D-05): daily meal count across the mess.
-     * EXCLUDES guest meals (Open Question #3 LOCKED — mirrors
-     * BillPreviewService::mealTotals()). Granularity per D-08.
-     *
-     * @return array{labels:array<int,string>,values:array<int,float>}
-     */
     public function mealTrend(int $messId, Carbon $from, Carbon $to): array
     {
         $b = MealType::value(MealType::BREAKFAST);
@@ -190,22 +119,29 @@ class DashboardService
             ->get()
             ->keyBy(fn ($r) => Carbon::parse($r->date)->toDateString());
 
-        $out = $this->fillBucketAxis($from, $to, $bucket['granularity'], function (string $dateKey) use ($rows) {
-            $row = $rows[$dateKey] ?? null;
+        $guestRows = collect();
+        if (class_exists(GuestMeal::class) && Schema::hasTable('guest_meals')) {
+            $cols = Schema::getColumnListing('guest_meals');
+            $col = in_array('count', $cols) ? 'count' : (in_array('meals', $cols) ? 'meals' : 'charge_amount');
+            
+            $guestRows = GuestMeal::query()
+                ->whereHas('member', fn($q) => $q->where('mess_id', $messId))
+                ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+                ->selectRaw("date, SUM({$col}) as total")
+                ->groupBy('date')
+                ->get()
+                ->keyBy(fn ($r) => Carbon::parse($r->date)->toDateString());
+        }
 
-            return $row ? (float) $row->total : 0.0;
+        $out = $this->fillBucketAxis($from, $to, $bucket['granularity'], function (string $dateKey) use ($rows, $guestRows) {
+            $reg = $rows[$dateKey] ?? null;
+            $gst = $guestRows[$dateKey] ?? null;
+            return ((float) ($reg ? $reg->total : 0.0)) + ((float) ($gst ? $gst->total : 0.0));
         });
 
         return $out;
     }
 
-    /**
-     * Expense Trend (D-06): monthly BAZAR total only.
-     * Filters by ExpenseCategory::kind === BAZAR (NOT bazar + fixed).
-     * Granularity per D-08.
-     *
-     * @return array{labels:array<int,string>,values:array<int,float>}
-     */
     public function expenseTrend(int $messId, Carbon $from, Carbon $to): array
     {
         $bazarCategoryIds = ExpenseCategory::query()
@@ -231,12 +167,6 @@ class DashboardService
         return $rows;
     }
 
-    /**
-     * Payment Trend (D-07): monthly total collected (all methods + both types).
-     * Granularity per D-08.
-     *
-     * @return array{labels:array<int,string>,values:array<int,float>}
-     */
     public function paymentTrend(int $messId, Carbon $from, Carbon $to): array
     {
         $bucket = $this->bucketing->bucket($from, $to);
@@ -250,18 +180,13 @@ class DashboardService
         );
     }
 
-    /**
-     * Total meal value for one date — used by the "Today's Meals" card.
-     * EXCLUDES guest meals (Open Question #3 LOCKED). Uses MealType::value()
-     * for the configured per-type values (Pitfall A3 — never hard-code 0.5/1/1).
-     */
     private function todayMealTotal(int $messId, Carbon $date): float
     {
         $b = MealType::value(MealType::BREAKFAST);
         $l = MealType::value(MealType::LUNCH);
         $d = MealType::value(MealType::DINNER);
 
-        return (float) MealEntry::query()
+        $regMeals = (float) MealEntry::query()
             ->where('mess_id', $messId)
             ->where('date', $date->toDateString())
             ->selectRaw(
@@ -270,14 +195,21 @@ class DashboardService
                 ."+ (CASE WHEN dinner THEN {$d} ELSE 0 END)) AS total"
             )
             ->value('total') ?? 0.0;
+
+        $guestMeals = 0.0;
+        if (class_exists(GuestMeal::class) && Schema::hasTable('guest_meals')) {
+            $cols = Schema::getColumnListing('guest_meals');
+            $col = in_array('count', $cols) ? 'count' : (in_array('meals', $cols) ? 'meals' : 'charge_amount');
+            
+            $guestMeals = (float) GuestMeal::query()
+                ->whereHas('member', fn($q) => $q->where('mess_id', $messId))
+                ->where('date', $date->toDateString())
+                ->sum($col);
+        }
+
+        return $regMeals + $guestMeals;
     }
 
-    /**
-     * Build a series from a query by GROUP-ing on the appropriate time bucket.
-     *
-     * @param  Builder  $query  base query (already mess-scoped + filter-clauses)
-     * @return array{labels:array<int,string>,values:array<int,float>}
-     */
     private function trendRows($query, Carbon $from, Carbon $to, string $granularity, string $sumColumn): array
     {
         [$groupExpr, $orderExpr] = match ($granularity) {
@@ -304,15 +236,6 @@ class DashboardService
         });
     }
 
-    /**
-     * Walk the bucket axis from $from to $to and produce labels + values.
-     * The $lookup closure returns the value for a given bucket key
-     * (Y-m-d for daily, Y-W for weekly, Y-m for monthly) — usually by
-     * consulting a ->keyBy()'d collection of GROUP BY rows.
-     *
-     * @param  \Closure(string):float  $lookup
-     * @return array{labels:array<int,string>,values:array<int,float>}
-     */
     private function fillBucketAxis(Carbon $from, Carbon $to, string $granularity, \Closure $lookup): array
     {
         $labels = [];
@@ -345,11 +268,6 @@ class DashboardService
         return ['labels' => $labels, 'values' => $values];
     }
 
-    /**
-     * Empty series (zero rows) when no bazar categories exist yet.
-     *
-     * @return array{labels:array<int,string>,values:array<int,float>}
-     */
     private function emptySeries(Carbon $from, Carbon $to): array
     {
         $bucket = $this->bucketing->bucket($from, $to);
@@ -362,90 +280,43 @@ class DashboardService
         return "dash:counts:{$messId}:{$date->year}-".str_pad((string) $date->month, 2, '0', STR_PAD_LEFT);
     }
 
-    /**
-     * Members with Dues (list): active members whose net balance is in debt.
-     * Cheapest source — advance_balances is a persisted running total.
-     *
-     * @return list<array{id:int,name:string,net:float}>
-     */
     public function membersWithDues(?int $messId = null): array
-{
-    $messId = $messId ?? \App\Models\Mess::activeId();
-    if (! $messId) {
-        return [];
-    }
-
-    try {
-        $now = \Carbon\Carbon::now();
-        $year = $now->year;
-        $month = $now->month;
-
-        // Calculate current month's meal rate directly
-        $totalBazar = (float) \App\Models\Expense::query()
-            ->where('mess_id', $messId)
-            ->whereYear('date', $year)
-            ->whereMonth('date', $month)
-            ->sum('amount');
-
-        $totalMeals = (float) \App\Models\Meal::query()
-            ->whereHas('member', fn ($q) => $q->where('mess_id', $messId))
-            ->whereYear('date', $year)
-            ->whereMonth('date', $month)
-            ->sum('count');
-
-        $mealRate = $totalMeals > 0 ? ($totalBazar / $totalMeals) : 0.0;
-
-        // Fetch active members
-        $members = \App\Models\Member::query()
-            ->where('mess_id', $messId)
-            ->where('is_active', true)
-            ->get();
-
-        $dueMembers = [];
-
-        foreach ($members as $member) {
-            $broughtForward = (float) ($member->opening_balance ?? 0);
-
-            $paid = (float) \App\Models\Payment::query()
-                ->where('member_id', $member->id)
-                ->whereYear('paid_at', $year)
-                ->whereMonth('paid_at', $month)
-                ->sum('amount');
-
-            $memberMeals = (float) \App\Models\Meal::query()
-                ->where('member_id', $member->id)
-                ->whereYear('date', $year)
-                ->whereMonth('date', $month)
-                ->sum('count');
-
-            $mealCost = $memberMeals * $mealRate;
-            $netBalance = $broughtForward + $paid - $mealCost;
-
-            // Include only members who still have an outstanding negative balance (due)
-            if ($netBalance < -0.05) {
-                $dueMembers[] = [
-                    'id'   => $member->id,
-                    'name' => $member->name,
-                    'net'  => abs($netBalance),
-                ];
-            }
+    {
+        $messId = $messId ?? \App\Models\Mess::activeId();
+        if (! $messId) {
+            return [];
         }
 
-        usort($dueMembers, fn ($a, $b) => $b['net'] <=> $a['net']);
+        try {
+            $now = \Carbon\Carbon::now();
+            $year = $now->year;
+            $month = $now->month;
 
-        return $dueMembers;
-    } catch (\Throwable $e) {
-        \Illuminate\Support\Facades\Log::error('membersWithDues error: ' . $e->getMessage());
-        return [];
+            $preview = $this->preview->preview($year, $month);
+            $members = collect($preview['members'] ?? [])->filter(function($m) {
+                return ($m['status'] ?? 'active') === 'active';
+            });
+
+            $dueMembers = [];
+            foreach ($members as $pm) {
+                $netBalance = $pm['closing_net'] ?? (($pm['bill_payments'] + $pm['brought_forward']) - $pm['meal_cost']);
+                if ($netBalance < -0.05) {
+                    $dueMembers[] = [
+                        'id'   => $pm['member_id'],
+                        'name' => $pm['name'],
+                        'net'  => abs($netBalance),
+                    ];
+                }
+            }
+
+            usort($dueMembers, fn ($a, $b) => $b['net'] <=> $a['net']);
+            return $dueMembers;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('membersWithDues error: ' . $e->getMessage());
+            return [];
+        }
     }
-}
 
-    /**
-     * Bazar vs Collection (this month): grocery+fixed spend vs money collected.
-     * Reuses the bill-preview cache for spend; collection is one SUM.
-     *
-     * @return array{spend:float,collected:float}
-     */
     public function bazarVsCollection(int $messId): array
     {
         $now = now();
@@ -459,12 +330,6 @@ class DashboardService
         return ['spend' => $spend, 'collected' => $collected];
     }
 
-    /**
-     * Expense Category Mix (this month): spend grouped by expense category,
-     * descending — powers the dashboard doughnut.
-     *
-     * @return list<array{label:string,amount:float}>
-     */
     public function expenseCategoryMix(int $messId): array
     {
         $now = now();
@@ -489,12 +354,6 @@ class DashboardService
         return $out;
     }
 
-    /**
-     * Top Eaters (this month): members with the most meals, top 5.
-     * Reuses the cached bill-preview members (no new query).
-     *
-     * @return list<array{id:int,name:string,meals:float}>
-     */
     public function topEaters(int $messId): array
     {
         $now = now();
