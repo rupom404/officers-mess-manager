@@ -337,31 +337,45 @@ Route::get('/admin/purge-ghost-records', function () {
             $messages[] = "⚠️ Could not purge meals: " . $e->getMessage();
         }
     }
-
-    // 2. Permanently delete soft-deleted members who have no actual data left
-    if (class_exists(\App\Models\Member::class)) {
-        try {
-            $trashedMembers = \App\Models\Member::onlyTrashed()->get();
-            $deletedMembers = 0;
-
-            foreach ($trashedMembers as $member) {
-                $hasMeals = class_exists(\App\Models\MealEntry::class) && \App\Models\MealEntry::where('member_id', $member->id)->exists();
-                $hasPayments = class_exists(\App\Models\Payment::class) && \App\Models\Payment::where('member_id', $member->id)->exists();
-                
-                if (!$hasMeals && !$hasPayments) {
-                    // Clear advance balances to prevent foreign key errors
-                    if (class_exists(\App\Models\AdvanceBalance::class)) {
-                        \App\Models\AdvanceBalance::where('member_id', $member->id)->delete();
-                    }
-                    $member->forceDelete();
-                    $deletedMembers++;
-                }
+// TEMPORARY: Nuke a specific ghost member by name
+Route::get('/admin/nuke-member/{name}', function ($name) {
+    if (!auth()->check()) {
+        return redirect('/login');
+    }
+    
+    // Find the member even if they are deactivated or trashed
+    $member = \App\Models\Member::withTrashed()->where('name', 'like', "%{$name}%")->first();
+    
+    if (!$member) {
+        return "<h2>Error</h2>Could not find any member matching '{$name}'.";
+    }
+    
+    $id = $member->id;
+    $messages = ["Found member: <b>{$member->name}</b> (ID: {$id})"];
+    
+    // 1. Force delete all related records to bypass PostgreSQL Foreign Key blocks
+    $tables = [
+        'meal_entries',
+        'guest_meals',
+        'advance_balances',
+        'payments',
+        'balance_adjustments',
+        'monthly_member_summaries',
+        'member_disabled_days'
+    ];
+    
+    foreach ($tables as $table) {
+        if (\Illuminate\Support\Facades\Schema::hasTable($table)) {
+            $deleted = \Illuminate\Support\Facades\DB::table($table)->where('member_id', $id)->delete();
+            if ($deleted > 0) {
+                $messages[] = "Cleared {$deleted} ghost records from {$table}.";
             }
-            $messages[] = "✅ Permanently deleted {$deletedMembers} trashed members (including Sohag).";
-        } catch (\Throwable $e) {
-            $messages[] = "⚠️ Could not force delete members: " . $e->getMessage();
         }
     }
-
-    return "<h2>SUCCESS!</h2><br>" . implode("<br><br>", $messages) . "<br><br><b>Sohag is completely removed from the database and the monthly report.</b><br><br><i>(Please delete this route from web.php later for security)</i>";
+    
+    // 2. Annihilate the member record directly from the database table
+    \Illuminate\Support\Facades\DB::table('members')->where('id', $id)->delete();
+    $messages[] = "✅ <b>{$member->name} has been permanently erased from the database.</b>";
+    
+    return "<h2>Purge Complete</h2>" . implode("<br><br>", $messages) . "<br><br><i>(Please delete this route from web.php later for security)</i>";
 });
