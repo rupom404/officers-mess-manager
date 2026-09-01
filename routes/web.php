@@ -303,50 +303,41 @@ Route::middleware(['auth', 'roles:mess-member', 'password.change'])->group(funct
         Route::get('monthly.xlsx', [MyReportExportController::class, 'monthlyExcel'])->name('monthly.xlsx');
     });
 });
-// TEMPORARY: Nuke a specific ghost member by name (Bypassing All Scopes)
-Route::get('/admin/nuke-member/{name}', function ($name) {
+// TEMPORARY: Deep Clean Cache and Orphaned Records
+Route::get('/admin/clean-mess', function () {
     if (!auth()->check()) {
         return redirect('/login');
     }
     
-    // 1. Bypass ALL Global Scopes (Active, Trashed, Mess Scopes) and use ILIKE for Postgres
-    $members = \App\Models\Member::withoutGlobalScopes()
-        ->where('name', 'ILIKE', "%{$name}%")
-        ->get();
-        
-    if ($members->isEmpty()) {
-        return "<h2>Error</h2>Could not find any member matching '{$name}', even after bypassing all scopes.";
-    }
-    
     $messages = [];
-    foreach ($members as $member) {
-        $id = $member->id;
-        $messages[] = "Found hidden member: <b>{$member->name}</b> (ID: {$id})";
-        
-        // 2. Force delete all related records to bypass PostgreSQL Foreign Key blocks
-        $tables = [
-            'meal_entries',
-            'guest_meals',
-            'advance_balances',
-            'payments',
-            'balance_adjustments',
-            'monthly_member_summaries',
-            'member_disabled_days'
-        ];
-        
-        foreach ($tables as $table) {
-            if (\Illuminate\Support\Facades\Schema::hasTable($table)) {
-                $deleted = \Illuminate\Support\Facades\DB::table($table)->where('member_id', $id)->delete();
-                if ($deleted > 0) {
-                    $messages[] = "Cleared {$deleted} ghost records from {$table}.";
-                }
+    
+    // 1. Flush the entire application cache (This destroys the ghost report)
+    \Illuminate\Support\Facades\Cache::flush();
+    $messages[] = "✅ Application cache successfully cleared.";
+    
+    // 2. Delete any leftover data belonging to deleted members
+    $tables = [
+        'meal_entries', 
+        'guest_meals', 
+        'advance_balances', 
+        'payments', 
+        'balance_adjustments', 
+        'member_disabled_days'
+    ];
+    
+    foreach ($tables as $table) {
+        if (\Illuminate\Support\Facades\Schema::hasTable($table)) {
+            // Delete records where the member_id no longer exists in the members table
+            $deleted = \Illuminate\Support\Facades\DB::table($table)
+                ->whereNotIn('member_id', function($q) {
+                    $q->select('id')->from('members');
+                })->delete();
+                
+            if ($deleted > 0) {
+                $messages[] = "🧹 Scrubbed {$deleted} orphaned records from {$table}.";
             }
         }
-        
-        // 3. Annihilate the member record directly from the database table
-        \Illuminate\Support\Facades\DB::table('members')->where('id', $id)->delete();
-        $messages[] = "✅ <b>{$member->name} has been permanently erased from the database.</b>";
     }
     
-    return "<h2>Purge Complete</h2>" . implode("<br><br>", $messages) . "<br><br><i>(Please delete this route from web.php later for security)</i>";
+    return "<h2>Deep Clean Complete!</h2><br>" . implode("<br><br>", $messages) . "<br><br><b>Please check your Monthly Report now. The ghost record should be gone.</b><br><br><i>(Please delete this route from web.php later)</i>";
 });
