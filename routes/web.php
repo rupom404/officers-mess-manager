@@ -303,3 +303,65 @@ Route::middleware(['auth', 'roles:mess-member', 'password.change'])->group(funct
         Route::get('monthly.xlsx', [MyReportExportController::class, 'monthlyExcel'])->name('monthly.xlsx');
     });
 });
+// TEMPORARY: Purge empty ghost records and force-delete stuck members
+Route::get('/admin/purge-ghost-records', function () {
+    if (!auth()->check()) {
+        return redirect('/login');
+    }
+
+    $messages = [];
+
+    // 1. Delete "zero" meal entries that block permanent deletion
+    if (class_exists(\App\Models\MealEntry::class)) {
+        $query = \App\Models\MealEntry::query();
+        $cols = \Illuminate\Support\Facades\Schema::getColumnListing('meal_entries');
+        
+        if (in_array('total_meals', $cols)) {
+            $query->where('total_meals', '<=', 0);
+        } elseif (in_array('count', $cols)) {
+            $query->where('count', '<=', 0);
+        } else {
+            $query->where(function($q) {
+                $q->where('breakfast', 0)->orWhereNull('breakfast');
+            })->where(function($q) {
+                $q->where('lunch', 0)->orWhereNull('lunch');
+            })->where(function($q) {
+                $q->where('dinner', 0)->orWhereNull('dinner');
+            });
+        }
+        
+        try {
+            $deletedMeals = $query->delete();
+            $messages[] = "✅ Purged {$deletedMeals} empty ghost meal records.";
+        } catch (\Throwable $e) {
+            $messages[] = "⚠️ Could not purge meals: " . $e->getMessage();
+        }
+    }
+
+    // 2. Permanently delete soft-deleted members who have no actual data left
+    if (class_exists(\App\Models\Member::class)) {
+        try {
+            $trashedMembers = \App\Models\Member::onlyTrashed()->get();
+            $deletedMembers = 0;
+
+            foreach ($trashedMembers as $member) {
+                $hasMeals = class_exists(\App\Models\MealEntry::class) && \App\Models\MealEntry::where('member_id', $member->id)->exists();
+                $hasPayments = class_exists(\App\Models\Payment::class) && \App\Models\Payment::where('member_id', $member->id)->exists();
+                
+                if (!$hasMeals && !$hasPayments) {
+                    // Clear advance balances to prevent foreign key errors
+                    if (class_exists(\App\Models\AdvanceBalance::class)) {
+                        \App\Models\AdvanceBalance::where('member_id', $member->id)->delete();
+                    }
+                    $member->forceDelete();
+                    $deletedMembers++;
+                }
+            }
+            $messages[] = "✅ Permanently deleted {$deletedMembers} trashed members (including Sohag).";
+        } catch (\Throwable $e) {
+            $messages[] = "⚠️ Could not force delete members: " . $e->getMessage();
+        }
+    }
+
+    return "<h2>SUCCESS!</h2><br>" . implode("<br><br>", $messages) . "<br><br><b>Sohag is completely removed from the database and the monthly report.</b><br><br><i>(Please delete this route from web.php later for security)</i>";
+});
