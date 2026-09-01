@@ -303,45 +303,50 @@ Route::middleware(['auth', 'roles:mess-member', 'password.change'])->group(funct
         Route::get('monthly.xlsx', [MyReportExportController::class, 'monthlyExcel'])->name('monthly.xlsx');
     });
 });
-// TEMPORARY: Nuke a specific ghost member by name
+// TEMPORARY: Nuke a specific ghost member by name (Bypassing All Scopes)
 Route::get('/admin/nuke-member/{name}', function ($name) {
     if (!auth()->check()) {
         return redirect('/login');
     }
     
-    // Find the member even if they are deactivated or trashed
-    $member = \App\Models\Member::withTrashed()->where('name', 'like', "%{$name}%")->first();
-    
-    if (!$member) {
-        return "<h2>Error</h2>Could not find any member matching '{$name}'.";
+    // 1. Bypass ALL Global Scopes (Active, Trashed, Mess Scopes) and use ILIKE for Postgres
+    $members = \App\Models\Member::withoutGlobalScopes()
+        ->where('name', 'ILIKE', "%{$name}%")
+        ->get();
+        
+    if ($members->isEmpty()) {
+        return "<h2>Error</h2>Could not find any member matching '{$name}', even after bypassing all scopes.";
     }
     
-    $id = $member->id;
-    $messages = ["Found member: <b>{$member->name}</b> (ID: {$id})"];
-    
-    // 1. Force delete all related records to bypass PostgreSQL Foreign Key blocks
-    $tables = [
-        'meal_entries',
-        'guest_meals',
-        'advance_balances',
-        'payments',
-        'balance_adjustments',
-        'monthly_member_summaries',
-        'member_disabled_days'
-    ];
-    
-    foreach ($tables as $table) {
-        if (\Illuminate\Support\Facades\Schema::hasTable($table)) {
-            $deleted = \Illuminate\Support\Facades\DB::table($table)->where('member_id', $id)->delete();
-            if ($deleted > 0) {
-                $messages[] = "Cleared {$deleted} ghost records from {$table}.";
+    $messages = [];
+    foreach ($members as $member) {
+        $id = $member->id;
+        $messages[] = "Found hidden member: <b>{$member->name}</b> (ID: {$id})";
+        
+        // 2. Force delete all related records to bypass PostgreSQL Foreign Key blocks
+        $tables = [
+            'meal_entries',
+            'guest_meals',
+            'advance_balances',
+            'payments',
+            'balance_adjustments',
+            'monthly_member_summaries',
+            'member_disabled_days'
+        ];
+        
+        foreach ($tables as $table) {
+            if (\Illuminate\Support\Facades\Schema::hasTable($table)) {
+                $deleted = \Illuminate\Support\Facades\DB::table($table)->where('member_id', $id)->delete();
+                if ($deleted > 0) {
+                    $messages[] = "Cleared {$deleted} ghost records from {$table}.";
+                }
             }
         }
+        
+        // 3. Annihilate the member record directly from the database table
+        \Illuminate\Support\Facades\DB::table('members')->where('id', $id)->delete();
+        $messages[] = "✅ <b>{$member->name} has been permanently erased from the database.</b>";
     }
-    
-    // 2. Annihilate the member record directly from the database table
-    \Illuminate\Support\Facades\DB::table('members')->where('id', $id)->delete();
-    $messages[] = "✅ <b>{$member->name} has been permanently erased from the database.</b>";
     
     return "<h2>Purge Complete</h2>" . implode("<br><br>", $messages) . "<br><br><i>(Please delete this route from web.php later for security)</i>";
 });
