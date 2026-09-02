@@ -14,13 +14,22 @@
         return (float) (round(((float)$val) / 5) * 5);
     };
 
-    // Helper: Format Tk without decimals
+    // Helper: Format Tk rounded without decimals
     $formatTk = function($amount) use ($round5) {
         $val = $round5($amount);
         if ($val < -0.001) {
             return '-Tk. ' . number_format(abs($val), 0);
         }
         return 'Tk. ' . number_format($val, 0);
+    };
+
+    // Helper: Format Tk exactly with 2 decimals (for Meal Rate)
+    $formatRawTk = function($amount) {
+        $val = (float) $amount;
+        if ($val < -0.001) {
+            return '-Tk. ' . number_format(abs($val), 2);
+        }
+        return 'Tk. ' . number_format($val, 2);
     };
 
     // Summary Totals
@@ -219,7 +228,7 @@
         </td>
         <td>
             <span class="label">{{ __('Current Meal Rate') }}</span>
-            <span class="val">{{ $formatTk($data['meal_rate'] ?? 0) }} <span style="font-size: 9px; font-weight: normal; color: #64748b;">/ meal</span></span>
+            <span class="val">{{ $formatRawTk($data['meal_rate'] ?? 0) }} <span style="font-size: 9px; font-weight: normal; color: #64748b;">/ meal</span></span>
         </td>
     </tr>
     <tr>
@@ -248,7 +257,7 @@
                 <th rowspan="2" style="width: 21%; text-align: left; padding-left: 10px;">{{ __('Member') }}</th>
                 <th rowspan="2" style="width: 10%; text-align: center;">{{ __('Meals') }}</th>
                 <th rowspan="2" style="width: 15%; text-align: right;">{{ __('Meal Cost') }}</th>
-                <th rowspan="2" style="width: 24%; text-align: center;">
+                <th rowspan="2" style="width: 24%; text-align: right;">
                     {{ __('Paid') }}
                     <span class="sub-note">(After calculating owes/credit)</span>
                 </th>
