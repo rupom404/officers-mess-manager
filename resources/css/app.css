@@ -34,7 +34,7 @@
         @apply bg-transparent text-slate-600 shadow-none hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-slate-300;
     }
     .btn-danger {
-        @apply bg-gradient-to-b from-rose-500 to-rose-600 text-white shadow-sm hover:from-rose-600 hover:to-700 hover:shadow-md focus-visible:ring-rose-500;
+        @apply bg-gradient-to-b from-rose-500 to-rose-600 text-white shadow-sm hover:from-rose-600 hover:to-rose-700 hover:shadow-md focus-visible:ring-rose-500;
     }
     .btn-amber {
         @apply bg-gradient-to-b from-amber-500 to-amber-600 text-white shadow-sm hover:from-amber-600 hover:to-amber-700 hover:shadow-md focus-visible:ring-amber-500;
