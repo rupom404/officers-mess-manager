@@ -6,37 +6,18 @@
 @source '../**/*.js';
 
 @theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
         'Segoe UI Symbol', 'Noto Color Emoji';
 }
 
-/*
- * Alpine v3 x-cloak — hide elements with [x-cloak] until Alpine has finished
- * initializing, so modals and dropdowns do not flash on page load.
- * Task 3 (quick-260717-2q3) — close-month modal Cancel button fix.
- */
 [x-cloak] { display: none !important; }
 
-/*
- * Touch-target utility (01-UI-SPEC §2.3 — clickable elements ≥44×44px).
- * Reused across manager daily-ops screens so they remain thumb-tappable at
- * 360px (D-13). Plain composition of Tailwind utilities — no custom CSS
- * properties, keeps the "no inline CSS, Tailwind only" PROJECT.md constraint.
- */
 @utility touch-target {
-    min-height: 2.75rem; /* 44px */
-    min-width: 2.75rem; /* 44px */
+    min-height: 2.75rem;
+    min-width: 2.75rem;
 }
 
-/*
- * Reusable UI component classes (Tailwind v4 @layer components + @apply).
- * Still "Tailwind only" — no inline CSS anywhere in Blade; every button/input
- * across the app converges on these so the look stays consistent. Used as
- * composed classes in markup (e.g. class="btn btn-primary", class="input input-date").
- */
 @layer components {
-    /* ---- Buttons: .btn (base) + variant. Elegance levers: rounded-lg,
-       transition, soft shadow + lift on hover, tactile active:scale. ---- */
     .btn {
         @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium whitespace-nowrap min-h-[44px] transition-all duration-200 ease-out select-none active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
     }
@@ -53,7 +34,7 @@
         @apply bg-transparent text-slate-600 shadow-none hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-slate-300;
     }
     .btn-danger {
-        @apply bg-gradient-to-b from-rose-500 to-rose-600 text-white shadow-sm hover:from-rose-600 hover:to-rose-700 hover:shadow-md focus-visible:ring-rose-500;
+        @apply bg-gradient-to-b from-rose-500 to-rose-600 text-white shadow-sm hover:from-rose-600 hover:to-700 hover:shadow-md focus-visible:ring-rose-500;
     }
     .btn-amber {
         @apply bg-gradient-to-b from-amber-500 to-amber-600 text-white shadow-sm hover:from-amber-600 hover:to-amber-700 hover:shadow-md focus-visible:ring-amber-500;
@@ -61,33 +42,24 @@
     .btn-sky {
         @apply bg-gradient-to-b from-sky-500 to-sky-600 text-white shadow-sm hover:from-sky-600 hover:to-sky-700 hover:shadow-md focus-visible:ring-sky-500;
     }
-    /* Tinted export-style links (icon + soft semantic color). */
     .btn-tint-emerald {
         @apply border border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm hover:border-emerald-300 hover:bg-emerald-100 focus-visible:ring-emerald-400;
     }
     .btn-tint-rose {
         @apply border border-rose-200 bg-rose-50 text-rose-700 shadow-sm hover:border-rose-300 hover:bg-rose-100 focus-visible:ring-rose-400;
     }
-    /* Size modifier (dense rows). Apply after .btn — later declaration wins. */
     .btn-sm {
         @apply min-h-0 px-2.5 py-1.5 text-xs gap-1 rounded-md;
     }
-
-    /* ---- Form controls: .input unifies text/select/textarea; .input-date
-       adds a custom calendar icon. Compose in markup: class="input input-date". ---- */
     .input {
         @apply block w-full min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 shadow-sm transition-colors duration-200 placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30;
     }
-    /* Validation error state — pair with @error('field') in Blade. */
     .input-error {
         @apply border-rose-400 focus:border-rose-500 focus:ring-rose-500/30;
     }
-    /* Date input: custom calendar glyph + room for it. The native
-       ::-webkit-calendar-picker-indicator can't be styled with utilities, so it
-       is hidden here (clicks still open the native picker) and our SVG shows. */
     .input-date {
         @apply cursor-pointer pr-10;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8' stroke-width='1.8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 2 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5'/%3E%3C/svg%3E");
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8' stroke-width='1.8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 0 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5'/%3E%3C/svg%3E");
         background-repeat: no-repeat;
         background-position: right 0.6rem center;
         background-size: 1.15rem 1.15rem;
@@ -104,19 +76,10 @@
     }
 }
 
-/*
- * Date inputs — custom calendar glyph applied to EVERY <input type="date">.
- * The native ::-webkit-calendar-picker-indicator can't be styled with Tailwind
- * utilities, so it lives here OUTSIDE @layer components (unlayered author CSS
- * reliably beats the .input class's padding): the native indicator is hidden
- * (clicks still open the picker) and our calendar SVG shows through. Any date
- * input carrying the .input class gets the full modern look automatically —
- * no per-field .input-date class needed.
- */
 input[type="date"] {
     cursor: pointer;
     padding-right: 2.5rem;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8' stroke-width='1.8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 2 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8' stroke-width='1.8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 0 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.6rem center;
     background-size: 1.15rem 1.15rem;
@@ -131,55 +94,268 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     cursor: pointer;
     opacity: 0;
 }
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
-/* Universal Dark Mode Overrides */
 html.dark {
     color-scheme: dark;
 }
 
 html.dark body {
-    background-color: #0b1120 !important;
-    color: #f1f5f9 !important;
+    background-color: #0b1220 !important;
+    color: #edf2f7 !important;
 }
 
 html.dark header,
 html.dark aside,
+html.dark #app-sidebar,
 html.dark .bg-white {
-    background-color: #131d31 !important;
-    border-color: #1e293b !important;
-    color: #f8fafc !important;
+    background-color: #111a2b !important;
+    border-color: #24324a !important;
+    color: #edf2f7 !important;
 }
 
 html.dark .border-slate-200,
 html.dark .border-slate-100,
 html.dark .border-slate-300 {
-    border-color: #1e293b !important;
+    border-color: #24324a !important;
 }
 
 html.dark .text-slate-900,
 html.dark .text-slate-800,
 html.dark .text-slate-700 {
-    color: #f8fafc !important;
+    color: #edf2f7 !important;
 }
 
 html.dark .text-slate-600,
 html.dark .text-slate-500,
 html.dark .text-slate-400 {
-    color: #94a3b8 !important;
+    color: #9aa9bd !important;
 }
 
 html.dark input,
 html.dark select,
 html.dark textarea {
-    background-color: #0f172a !important;
-    border-color: #334155 !important;
+    background-color: #0e1726 !important;
+    border-color: #33445f !important;
     color: #f8fafc !important;
 }
 
 html.dark .bg-slate-50,
 html.dark .bg-slate-100 {
-    background-color: #1e293b !important;
+    background-color: #18243a !important;
+}
+
+html.dark .btn-secondary {
+    background: #17243a !important;
+    border-color: #33445f !important;
+    color: #e5edf7 !important;
+}
+
+html.dark .btn-secondary:hover {
+    background: #1d2c45 !important;
+    border-color: #425671 !important;
+}
+
+html.dark .btn-ghost {
+    color: #aebbd0 !important;
+}
+
+html.dark .btn-ghost:hover {
+    background: #17243a !important;
+    color: #f8fafc !important;
+}
+
+html.dark .btn-tint-emerald {
+    background: rgba(16, 185, 129, 0.12) !important;
+    border-color: rgba(52, 211, 153, 0.28) !important;
+    color: #6ee7b7 !important;
+}
+
+html.dark .btn-tint-rose {
+    background: rgba(244, 63, 94, 0.12) !important;
+    border-color: rgba(251, 113, 133, 0.28) !important;
+    color: #fda4af !important;
+}
+
+html.dark table,
+html.dark thead,
+html.dark thead tr,
+html.dark th,
+html.dark .bg-slate-50,
+html.dark .bg-slate-100,
+html.dark .bg-gray-50,
+html.dark .bg-gray-100 {
+    background-color: #162238 !important;
+    color: #9aa9bd !important;
+    border-color: #24324a !important;
+}
+
+html.dark thead th {
+    background-color: #0f1929 !important;
+    color: #9aa9bd !important;
+}
+
+html.dark tbody tr {
+    background-color: #111a2b !important;
+    border-color: #24324a !important;
+}
+
+html.dark tbody tr:hover {
+    background-color: #17263d !important;
+}
+
+html.dark td,
+html.dark tr {
+    border-color: #24324a !important;
+}
+
+html.dark .divide-slate-100 > * + *,
+html.dark .divide-slate-200 > * + * {
+    border-color: #24324a !important;
+}
+
+/* Visual system: restrained, premium, and consistent across all pages. */
+body {
+    font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif !important;
+    letter-spacing: -0.01em;
+    background: #f6f8fb !important;
+}
+
+#main-content {
+    min-width: 0;
+}
+
+#main-content > div {
+    max-width: 90rem !important;
+}
+
+header.sticky {
+    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06), 0 6px 20px rgba(15, 23, 42, 0.035);
+}
+
+html.dark header.sticky {
+    box-shadow: 0 1px 0 rgba(148, 163, 184, 0.07), 0 8px 24px rgba(2, 6, 23, 0.22);
+}
+
+/* Give existing cards a subtle elevation instead of changing their content or behavior. */
+#main-content .rounded-xl.border.bg-white,
+#main-content .rounded-2xl.border.bg-white {
+    border-color: rgba(148, 163, 184, 0.24) !important;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.035), 0 10px 30px rgba(15, 23, 42, 0.035);
+}
+
+html.dark #main-content .rounded-xl.border.bg-white,
+html.dark #main-content .rounded-2xl.border.bg-white {
+    border-color: #263652 !important;
+    box-shadow: 0 1px 2px rgba(2, 6, 23, 0.24), 0 14px 36px rgba(2, 6, 23, 0.14);
+}
+
+@media (max-width: 767px) {
+    header.sticky {
+        height: 60px !important;
+        min-height: 60px !important;
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+        background-color: rgba(255, 255, 255, 0.98) !important;
+        backdrop-filter: blur(14px);
+    }
+
+    html.dark header.sticky {
+        background-color: rgba(17, 26, 43, 0.98) !important;
+    }
+
+    header.sticky a img {
+        height: 2rem !important;
+        max-width: 11rem;
+    }
+
+    #global-sidebar-toggle {
+        width: 2.5rem !important;
+        height: 2.5rem !important;
+        border-radius: 0.9rem !important;
+    }
+
+    header.sticky > div:last-child {
+        gap: 0.35rem !important;
+    }
+
+    header.sticky > div:last-child > form button,
+    header.sticky > div:last-child > button,
+    header.sticky > div:last-child [role="button"] {
+        min-width: 2.5rem;
+        min-height: 2.5rem;
+    }
+
+    #main-content {
+        padding: 1.25rem 0.75rem 2rem !important;
+    }
+
+    #main-content > div {
+        max-width: none !important;
+    }
+
+    #main-content h1.text-2xl {
+        font-size: 1.55rem !important;
+        line-height: 1.25 !important;
+    }
+
+    #main-content .group.relative.rounded-2xl.border.bg-white {
+        padding: 1rem !important;
+        border-radius: 1rem !important;
+    }
+
+    #main-content .group.relative.rounded-2xl.border.bg-white p.text-3xl {
+        font-size: 1.75rem !important;
+        line-height: 1.15 !important;
+        margin-top: 0.65rem !important;
+    }
+
+    #main-content .group.relative.rounded-2xl.border.bg-white .stat-icon-badge {
+        width: 2rem;
+        height: 2rem;
+        border-radius: 0.7rem;
+    }
+
+    #main-content table {
+        font-size: 0.8125rem;
+    }
+
+    #main-content th,
+    #main-content td {
+        padding-top: 0.65rem !important;
+        padding-bottom: 0.65rem !important;
+    }
+
+    #main-content .overflow-x-auto {
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+    }
+
+    #main-content .overflow-x-auto table th:first-child,
+    #main-content .overflow-x-auto table td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        box-shadow: 6px 0 12px -10px rgba(15, 23, 42, 0.35);
+    }
+
+    #main-content .overflow-x-auto table thead th:first-child {
+        z-index: 4;
+    }
+
+    #main-content .overflow-x-auto table td:first-child {
+        background: #ffffff;
+    }
+
+    html.dark #main-content .overflow-x-auto table td:first-child {
+        background: #111a2b !important;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
 }
