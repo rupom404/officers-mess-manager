@@ -155,3 +155,44 @@ html.dark #main-content [data-member-search]:focus {
         box-shadow: 0 1px 2px rgba(2,6,23,.2), 0 8px 20px rgba(2,6,23,.12);
     }
 }
+
+/* Payments page: keep the ledger visually calm while giving amounts and actions clear hierarchy. */
+#main-content .payments-ledger {
+    border-color: rgba(148,163,184,.24);
+    box-shadow: 0 1px 2px rgba(15,23,42,.03), 0 12px 30px rgba(15,23,42,.035);
+}
+#main-content .payments-ledger thead th {
+    font-size: .68rem;
+    letter-spacing: .06em;
+    font-weight: 700;
+    white-space: nowrap;
+}
+#main-content .payments-ledger tbody tr {
+    transition: background-color .16s ease, box-shadow .16s ease;
+}
+#main-content .payments-ledger tbody tr:hover {
+    background: #f8fafc;
+}
+#main-content .payments-ledger .payment-amount {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+}
+#main-content .payment-card {
+    border-color: rgba(148,163,184,.22);
+    box-shadow: 0 1px 2px rgba(15,23,42,.025), 0 8px 22px rgba(15,23,42,.03);
+    transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+#main-content .payment-card:active { transform: scale(.995); }
+html.dark #main-content .payments-ledger { border-color: #263652; box-shadow: 0 1px 2px rgba(2,6,23,.22), 0 16px 36px rgba(2,6,23,.14); }
+html.dark #main-content .payments-ledger tbody tr:hover { background: #17263d; }
+html.dark #main-content .payment-card { border-color: #263652; box-shadow: 0 1px 2px rgba(2,6,23,.2), 0 10px 24px rgba(2,6,23,.12); }
+
+@media (max-width: 767px) {
+    #main-content .payments-filter {
+        padding: 1rem !important;
+        border-radius: 1rem !important;
+    }
+    #main-content .payments-filter .grid {
+        gap: .75rem;
+    }
+}
