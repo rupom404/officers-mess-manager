@@ -359,3 +359,27 @@ html.dark #main-content .rounded-2xl.border.bg-white {
         animation-iteration-count: 1 !important;
     }
 }
+
+
+/* Dashboard polish: stronger hierarchy and premium data-card treatment. */
+.dashboard-card {
+    position: relative;
+    overflow: hidden;
+    border-radius: 1.15rem;
+    transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+}
+.dashboard-card:hover { transform: translateY(-2px); }
+.dashboard-card::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 2px;
+    background: rgba(148,163,184,.16);
+}
+.dashboard-card.is-positive::after { background: rgba(16,185,129,.55); }
+.dashboard-card.is-negative::after { background: rgba(244,63,94,.50); }
+
+@media (max-width: 767px) {
+    .dashboard-card { border-radius: 1rem; }
+    .dashboard-card:hover { transform: none; }
+}
