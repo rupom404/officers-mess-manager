@@ -52,7 +52,7 @@
         <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             
             <!-- 1. Total Members -->
-            <div class="group relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-[#1e2c47] dark:bg-[#141e33]">
+            <div class="group relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dashboard-card dark:border-[#1e2c47] dark:bg-[#141e33]">
                 <div class="flex items-center justify-between">
                     <span class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{{ __('Total Members') }}</span>
                     <div class="stat-icon-badge badge-slate">
@@ -64,7 +64,7 @@
             </div>
 
             <!-- 2. Today's Meals -->
-            <div class="group relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-[#1e2c47] dark:bg-[#141e33]">
+            <div class="group relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dashboard-card dark:border-[#1e2c47] dark:bg-[#141e33]">
                 <div class="flex items-center justify-between">
                     <span class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{{ __("Today's Meals") }}</span>
                     <div class="stat-icon-badge badge-sky">
@@ -76,7 +76,7 @@
             </div>
 
             <!-- 3. Total Meals (Month) -->
-            <div class="group relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-[#1e2c47] dark:bg-[#141e33]">
+            <div class="group relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dashboard-card dark:border-[#1e2c47] dark:bg-[#141e33]">
                 <div class="flex items-center justify-between">
                     <span class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{{ __('Total Meals (Month)') }}</span>
                     <div class="stat-icon-badge badge-indigo">
@@ -103,7 +103,7 @@
             </div>
 
             <!-- 5. Monthly Expenses -->
-            <div class="group relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-[#1e2c47] dark:bg-[#141e33]">
+            <div class="group relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dashboard-card is-positive dark:border-[#1e2c47] dark:bg-[#141e33]">
                 <div class="flex items-center justify-between">
                     <span class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{{ __('Monthly Expenses') }}</span>
                     <div class="stat-icon-badge badge-amber">
@@ -115,7 +115,7 @@
             </div>
 
             <!-- 6. Total Credit (Advance) -->
-            <div class="group relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-[#1e2c47] dark:bg-[#141e33]">
+            <div class="group relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dashboard-card dark:border-[#1e2c47] dark:bg-[#141e33]">
                 <div class="flex items-center justify-between">
                     <span class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-400">{{ __('Total Advance') }}</span>
                     <div class="stat-icon-badge badge-emerald">
