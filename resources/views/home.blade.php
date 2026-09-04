@@ -88,7 +88,7 @@
             </div>
 
             <!-- 4. Current Meal Rate -->
-            <div class="group relative rounded-2xl border border-emerald-300/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-emerald-500/30 dark:bg-[#141e33]">
+            <div class="group relative rounded-2xl border border-emerald-300/80 bg-white p-5 shadow-xs transition-all duration-200 dashboard-card is-positive hover:-translate-y-0.5 hover:shadow-md dark:border-emerald-500/30 dark:bg-[#141e33]">
                 <div class="flex items-center justify-between">
                     <span class="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">{{ __('Meal Rate') }}</span>
                     <div class="stat-icon-badge badge-emerald">
@@ -127,7 +127,7 @@
             </div>
 
             <!-- 7. Total Dues -->
-            <div class="group relative rounded-2xl border border-rose-300/80 bg-white p-5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-rose-500/30 dark:bg-[#141e33]">
+            <div class="group relative rounded-2xl border border-rose-300/80 bg-white p-5 shadow-xs transition-all duration-200 dashboard-card is-negative hover:-translate-y-0.5 hover:shadow-md dark:border-rose-500/30 dark:bg-[#141e33]">
                 <div class="flex items-center justify-between">
                     <span class="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">{{ __('Total Dues') }}</span>
                     <div class="stat-icon-badge badge-rose">
