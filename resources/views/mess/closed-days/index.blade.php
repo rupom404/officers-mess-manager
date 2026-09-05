@@ -1,101 +1,16 @@
 @extends('layouts.app')
 @section('content')
-    <header class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-            <h1 class="text-2xl font-semibold leading-tight text-slate-900">{{ __('Mess Closed Days') }}</h1>
-            <p class="mt-1 text-sm text-slate-600">{{ __('Days when the mess is closed (no meals are tracked).') }}</p>
-        </div>
-        <div class="flex items-center gap-2">
-            <a href="{{ route('mess.closed-days.index', ['month' => $month->copy()->subMonth()->format('Y-m')]) }}"
-               class="btn btn-secondary btn-sm">&larr;</a>
-            <input type="month" value="{{ $month->format('Y-m') }}" data-month-picker
-                   class="input w-auto text-sm">
-            <a href="{{ route('mess.closed-days.index', ['month' => $month->copy()->addMonth()->format('Y-m')]) }}"
-               class="btn btn-secondary btn-sm">&rarr;</a>
-        </div>
-    </header>
-
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div class="lg:col-span-2">
-            <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
-                <div class="border-b border-slate-200 px-4 py-3">
-                    <h2 class="text-sm font-semibold text-slate-900">{{ $month->translatedFormat('F Y') }}</h2>
-                </div>
-                @if ($closedDays->isEmpty())
-                    <div class="px-4 py-6 text-center text-sm text-slate-500">
-                        {{ __('No closed days this month.') }}
-                    </div>
-                @else
-                    <ul class="divide-y divide-slate-100">
-                        @foreach ($closedDays as $closedDay)
-                            <li class="flex items-center justify-between px-4 py-3">
-                                <div class="flex items-center gap-3">
-                                    <div class="flex h-10 w-10 items-center justify-center rounded-full bg-red-100 text-sm font-semibold text-red-700">
-                                        {{ $closedDay->date->format('d') }}
-                                    </div>
-                                    <div>
-                                        <p class="text-sm font-medium text-slate-900">
-                                            {{ $closedDay->date->format('l, d M Y') }}
-                                        </p>
-                                        @if ($closedDay->reason)
-                                            <p class="text-xs text-slate-500">{{ $closedDay->reason }}</p>
-                                        @endif
-                                    </div>
-                                </div>
-                                <form method="POST" action="{{ route('mess.closed-days.destroy', $closedDay) }}"
-                                      onsubmit="return confirm('{{ __('Re-open this day?') }}');">
-                                    @csrf @method('DELETE')
-                                    <button type="submit" class="btn btn-secondary btn-sm">{{ __('Re-open') }}</button>
-                                </form>
-                            </li>
-                        @endforeach
-                    </ul>
-                @endif
-            </div>
-        </div>
-
-        <div>
-            <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h2 class="text-sm font-semibold text-slate-900">{{ __('Close a day') }}</h2>
-                <p class="mt-1 text-xs text-slate-500">{{ __('No meals can be entered for closed days.') }}</p>
-
-                <form method="POST" action="{{ route('mess.closed-days.store') }}" class="mt-4 flex flex-col gap-3">
-                    @csrf
-
-                    <div class="flex flex-col gap-1">
-                        <label for="date" class="text-sm font-medium text-slate-900">{{ __('Date') }}</label>
-                        <input type="date" name="date" id="date" required
-                               class="input @error('date') border-red-500 @enderror"
-                               value="{{ old('date', $month->copy()->format('Y-m-d')) }}">
-                        @error('date') <p class="text-sm text-red-700">{{ $message }}</p> @enderror
-                    </div>
-
-                    <div class="flex flex-col gap-1">
-                        <label for="reason" class="text-sm font-medium text-slate-900">{{ __('Reason') }}</label>
-                        <input type="text" name="reason" id="reason" maxlength="255"
-                               class="input @error('reason') border-red-500 @enderror"
-                               placeholder="{{ __('e.g. Eid holiday, maintenance...') }}">
-                        @error('reason') <p class="text-sm text-red-700">{{ $message }}</p> @enderror
-                    </div>
-
-                    <button type="submit" class="btn btn-primary">{{ __('Close this day') }}</button>
-                </form>
-            </div>
+    <div class="mx-auto max-w-7xl space-y-5">
+        <header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div><div class="flex flex-wrap items-center gap-2"><h1 class="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">{{ __('Mess Closed Days') }}</h1><span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{{ __('Calendar') }}</span></div><p class="mt-1 text-sm text-slate-500 dark:text-slate-400">{{ __('Days when the mess is closed (no meals are tracked).') }}</p></div>
+            <div class="flex items-center gap-2"><a href="{{ route('mess.closed-days.index', ['month' => $month->copy()->subMonth()->format('Y-m')]) }}" class="btn btn-secondary btn-sm">&larr;</a><input type="month" value="{{ $month->format('Y-m') }}" data-month-picker class="input w-auto text-sm"><a href="{{ route('mess.closed-days.index', ['month' => $month->copy()->addMonth()->format('Y-m')]) }}" class="btn btn-secondary btn-sm">&rarr;</a></div>
+        </header>
+        <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            <section class="rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-[#111827] lg:col-span-2"><div class="border-b border-slate-200 px-4 py-3 dark:border-slate-800"><h2 class="text-sm font-semibold text-slate-900 dark:text-white">{{ $month->translatedFormat('F Y') }}</h2></div>
+                @if ($closedDays->isEmpty())<div class="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">{{ __('No closed days this month.') }}</div>@else<ul class="divide-y divide-slate-100 dark:divide-slate-800">@foreach ($closedDays as $closedDay)<li class="flex items-center justify-between gap-4 px-4 py-4"><div class="flex min-w-0 items-center gap-3"><div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-sm font-semibold text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{{ $closedDay->date->format('d') }}</div><div class="min-w-0"><p class="text-sm font-medium text-slate-900 dark:text-white">{{ $closedDay->date->format('l, d M Y') }}</p>@if ($closedDay->reason)<p class="text-xs text-slate-500 dark:text-slate-400">{{ $closedDay->reason }}</p>@endif</div></div><form method="POST" action="{{ route('mess.closed-days.destroy', $closedDay) }}" onsubmit="return confirm('{{ __('Re-open this day?') }}');">@csrf @method('DELETE')<button type="submit" class="btn btn-secondary btn-sm">{{ __('Re-open') }}</button></form></li>@endforeach</ul>@endif
+            </section>
+            <section class="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#111827] sm:p-6"><h2 class="text-sm font-semibold text-slate-900 dark:text-white">{{ __('Close a day') }}</h2><p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ __('No meals can be entered for closed days.') }}</p><form method="POST" action="{{ route('mess.closed-days.store') }}" class="mt-4 flex flex-col gap-3">@csrf<div class="flex flex-col gap-1"><label for="date" class="text-sm font-medium text-slate-900 dark:text-white">{{ __('Date') }}</label><input type="date" name="date" id="date" required class="input @error('date') border-rose-500 @enderror" value="{{ old('date', $month->copy()->format('Y-m-d')) }}">@error('date')<p class="text-sm text-rose-700 dark:text-rose-400">{{ $message }}</p>@enderror</div><div class="flex flex-col gap-1"><label for="reason" class="text-sm font-medium text-slate-900 dark:text-white">{{ __('Reason') }}</label><input type="text" name="reason" id="reason" maxlength="255" class="input @error('reason') border-rose-500 @enderror" placeholder="{{ __('e.g. Eid holiday, maintenance...') }}">@error('reason')<p class="text-sm text-rose-700 dark:text-rose-400">{{ $message }}</p>@enderror</div><button type="submit" class="btn btn-primary">{{ __('Close this day') }}</button></form></section>
         </div>
     </div>
-
-    @once
-        <script>
-            (function () {
-                const picker = document.querySelector('[data-month-picker]');
-                if (picker) {
-                    picker.addEventListener('change', function () {
-                        if (picker.value) {
-                            window.location.href = '{{ route('mess.closed-days.index') }}' + '?month=' + picker.value;
-                        }
-                    });
-                }
-            })();
-        </script>
-    @endonce
+    @once<script>(function(){const picker=document.querySelector('[data-month-picker]');if(picker){picker.addEventListener('change',function(){if(picker.value){window.location.href='{{ route('mess.closed-days.index') }}'+'?month='+picker.value;}});}})();</script>@endonce
 @endsection
