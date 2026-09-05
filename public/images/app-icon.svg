@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <circle cx="256" cy="256" r="256" fill="#FFFFFF"/>
+  <svg x="56" y="56" width="400" height="400" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <style>
+        .navy { fill: #0B2038; }
+        .navy-stroke { stroke: #0B2038; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+        .gold { fill: #C49247; }
+        .gold-stroke { stroke: #C49247; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+        .white { fill: #FFFFFF; }
+      </style>
+    </defs>
+
+    <circle cx="200" cy="200" r="190" fill="#FFFFFF" class="navy-stroke" stroke-width="7" />
+    <circle cx="200" cy="200" r="180" class="gold-stroke" stroke-width="3" />
+    <circle cx="200" cy="200" r="172" fill="none" stroke="#0B2038" stroke-width="1.2" stroke-dasharray="3 5" stroke-opacity="0.5" />
+
+    <g transform="translate(45, 45) scale(0.95)">
+      <path class="gold" d="M 148 48 C 144 40, 153 34, 150 24 C 156 32, 148 38, 151 48 Z" />
+      <path class="gold" d="M 163 43 C 156 30, 168 22, 163 8 C 172 20, 161 28, 167 43 Z" />
+      <path class="gold" d="M 178 48 C 182 40, 173 34, 176 24 C 170 32, 178 38, 175 48 Z" />
+
+      <ellipse cx="163" cy="56" rx="8" ry="6" class="navy" />
+      <path class="navy" d="M 104 112 A 59 59 0 0 1 222 112 Z" />
+      <path d="M 116 106 A 46 46 0 0 1 141 72" fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round" />
+      <rect x="96" y="112" width="134" height="6" rx="3" class="navy" />
+
+      <path d="M 34 140 Q 163 112 292 140 Q 163 120 34 140 Z" class="navy" />
+
+      <g transform="translate(68, 44)">
+        <rect x="14" y="34" width="3.5" height="50" class="navy" rx="1.5" />
+        <path class="navy" d="M 9 10 L 9 25 Q 9 34 16 34 Q 23 34 23 25 L 23 10 L 21 10 L 21 23 Q 21 27 16 27 Q 11 27 11 23 L 11 10 Z" />
+        <rect x="14" y="10" width="3.5" height="14" class="navy" />
+      </g>
+      <g transform="translate(223, 44)">
+        <ellipse cx="18" cy="23" rx="13" ry="18" class="navy" />
+        <rect x="16.5" y="38" width="3.5" height="46" class="navy" rx="1.5" />
+      </g>
+
+      <line x1="100" y1="158" x2="100" y2="200" class="gold-stroke" stroke-width="2" />
+      <line x1="163" y1="158" x2="163" y2="200" class="gold-stroke" stroke-width="2" />
+      <line x1="226" y1="158" x2="226" y2="200" class="gold-stroke" stroke-width="2" />
+
+      <g transform="translate(50, 164)">
+        <path class="gold" d="M 4 14 Q 18 14 32 14 L 27 28 Q 18 31 9 28 Z" />
+        <rect x="11" y="28" width="14" height="2.5" class="gold" rx="1" />
+        <circle cx="18" cy="9" r="2.8" class="gold" />
+        <circle cx="12" cy="11.5" r="2.5" class="gold" />
+        <circle cx="24" cy="11.5" r="2.5" class="gold" />
+      </g>
+
+      <g transform="translate(114, 160)">
+        <path d="M 9 14 L 18 3 L 27 14" class="gold-stroke" stroke-width="2" />
+        <rect x="4" y="14" width="28" height="4" class="gold" rx="1.5" />
+        <path class="gold" d="M 6 18 L 10 35 L 26 35 L 30 18 Z" />
+        <rect x="12" y="22" width="2.2" height="9" class="white" rx="0.8" />
+        <rect x="17" y="22" width="2.2" height="9" class="white" rx="0.8" />
+        <rect x="22" y="22" width="2.2" height="9" class="white" rx="0.8" />
+      </g>
+
+      <g transform="translate(179, 160)">
+        <path class="gold-stroke" stroke-width="2.2" d="M 5 2 L 29 2 L 29 35 L 25 32 L 21 35 L 17 32 L 13 35 L 9 32 L 5 35 Z" />
+        <line x1="10" y1="8" x2="24" y2="8" class="gold-stroke" stroke-width="2" />
+        <text x="17" y="26.5" font-family="'DejaVu Sans', sans-serif" font-size="14" font-weight="bold" class="gold" text-anchor="middle">৳</text>
+      </g>
+
+      <g transform="translate(238, 164)">
+        <rect x="1" y="2" width="26" height="16" rx="2.5" class="gold" opacity="0.6" />
+        <rect x="7" y="9" width="28" height="19" rx="2.5" class="gold" />
+        <rect x="7" y="14" width="28" height="3.5" class="white" />
+        <text x="17" y="25" font-family="'DejaVu Sans', sans-serif" font-size="7.5" font-weight="bold" class="white" text-anchor="middle">৳</text>
+      </g>
+
+      <line x1="20" y1="246" x2="86" y2="246" class="gold-stroke" stroke-width="3" />
+      <line x1="240" y1="246" x2="306" y2="246" class="gold-stroke" stroke-width="3" />
+
+      <path class="navy" d="M 90 238 L 163 189 L 236 238 L 236 272 C 236 282 204 290 163 290 C 122 290 90 282 90 272 Z" />
+      <path d="M 110 240 L 163 204 L 216 240" class="gold-stroke" stroke-width="6" />
+      <path d="M 193 216 L 193 209 L 203 209 L 203 222" class="gold" />
+      <rect x="126" y="244" width="7" height="22" class="gold" rx="1" />
+      <rect x="193" y="244" width="7" height="22" class="gold" rx="1" />
+      <rect x="149" y="238" width="11" height="10" class="white" rx="1" />
+      <rect x="165" y="238" width="11" height="10" class="white" rx="1" />
+      <rect x="149" y="252" width="11" height="10" class="white" rx="1" />
+      <rect x="165" y="252" width="11" height="10" class="white" rx="1" />
+    </g>
+  </svg>
+</svg>
