@@ -6,5 +6,9 @@ self.addEventListener('activate', function (event) {
     event.waitUntil(self.clients.claim());
 });
 
-// Intentionally do not intercept fetches or cache authenticated pages/data.
-// Financial information should always be read from the live application.
+// Keep a fetch handler so Chromium can recognize the service worker as part
+// of an installable app, while still sending every request to the live server.
+// No caching is performed, so authenticated and financial data stay fresh.
+self.addEventListener('fetch', function (event) {
+    event.respondWith(fetch(event.request));
+});
