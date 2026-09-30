@@ -8,6 +8,11 @@
 @section('report-body')
 @php
     $members = $data['members'] ?? [];
+    
+    // Dynamically calculate the month name and year from the actual data payload
+    $reportYear = $data['year'] ?? now()->year;
+    $reportMonth = $data['month'] ?? now()->month;
+    $periodName = \Carbon\Carbon::create($reportYear, $reportMonth, 1)->format('F Y');
 
     // Helper: Round to nearest multiple of 5 (e.g., 42 -> 40, 43.5 -> 45)
     $round5 = function ($val) {
@@ -209,7 +214,7 @@
                 OFFICERS' MESS
             </h2>
             <p style="margin: 2px 0 0 0; font-size: 11px; color: #475569; font-weight: 500;">
-                Monthly Statement Report — {{ $data['month_name'] ?? 'August' }} {{ $data['year'] ?? '2026' }}
+                Monthly Meal Report — {{ $periodName }}
             </p>
         </td>
     </tr>
