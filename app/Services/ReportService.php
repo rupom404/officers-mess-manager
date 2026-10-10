@@ -7,6 +7,7 @@ use App\Models\Mess;
 use App\Models\MonthlyClosing;
 use App\Models\MonthlyMemberSummary;
 use App\Models\Payment;
+use App\Support\MemberStatus;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -187,11 +188,10 @@ class ReportService
             ->orderBy('member_id')
             ->get();
 
+        $activeStatusVal = MemberStatus::ACTIVE instanceof \BackedEnum ? MemberStatus::ACTIVE->value : (string) MemberStatus::ACTIVE;
+
         $members = [];
         foreach ($rows as $row) {
-            // Map snapshot columns to the BillPreviewService live-row keys
-            // verbatim. `advance_applied` is renamed to `bill_payments` on
-            // the way out (Pitfall 3) — they hold the same value.
             $closingBalance = $row->closing_balance !== null ? (float) $row->closing_balance : null;
             if ($closingBalance === null) {
                 $advanceBalance = 0.0;
@@ -201,23 +201,36 @@ class ReportService
                 $runningDue = $closingBalance < 0 ? abs($closingBalance) : 0.0;
             }
 
+            $meals = (float) $row->total_meals;
+            $bill = (float) $row->gross_bill;
+            $billPayments = (float) $row->advance_applied;
+            $broughtForward = $row->brought_forward !== null ? (float) $row->brought_forward : 0.0;
+            $status = $row->member?->status ?? 'active';
+            $statusStr = $status instanceof \BackedEnum ? $status->value : (string) $status;
+            $isActive = strcasecmp($statusStr, $activeStatusVal) === 0;
+
+            // Safeguard: Omit former members in historical snapshots if they carried zero activity/balance
+            if (! $isActive && $meals < 0.001 && $bill < 0.001 && $billPayments < 0.001 && abs($broughtForward) < 0.01 && $runningDue < 0.01 && $advanceBalance < 0.01) {
+                continue;
+            }
+
             $members[] = [
                 'member_id' => $row->member_id,
                 'name' => $row->member?->name ?? (string) $row->member_id,
-                'meals' => (float) $row->total_meals,
+                'meals' => $meals,
                 'meal_cost' => (float) $row->meal_cost,
                 'fixed_share' => (float) $row->fixed_cost_share,
                 'guest_total' => (float) $row->guest_meal_charge,
-                'bill' => (float) $row->gross_bill,
-                'bill_payments' => (float) $row->advance_applied,
-                'advance_payments' => 0.0, // not tracked on the snapshot
-                'advance_applied' => (float) $row->advance_applied, // kept for parity; views MUST NOT display this
+                'bill' => $bill,
+                'bill_payments' => $billPayments,
+                'advance_payments' => 0.0,
+                'advance_applied' => $billPayments,
                 'due' => (float) $row->balance_due,
-                'brought_forward' => $row->brought_forward !== null ? (float) $row->brought_forward : 0.0,
+                'brought_forward' => $broughtForward,
                 'advance_balance' => $advanceBalance,
                 'due_balance' => $runningDue,
                 'active_days' => 0,
-                'status' => $row->member?->status ?? 'active',
+                'status' => $status,
             ];
         }
 
@@ -234,10 +247,6 @@ class ReportService
         ];
     }
 
-    /**
-     * @param  array<string,mixed>  $filters
-     * @return array{rows:LengthAwarePaginator<mixed>,totals:array{amount:float}}
-     */
     public function expenseReport(array $filters): array
     {
         $query = Expense::query()
@@ -258,10 +267,6 @@ class ReportService
         return compact('rows', 'totals');
     }
 
-    /**
-     * @param  array<string,mixed>  $filters
-     * @return array{rows:LengthAwarePaginator<mixed>,totals:array{amount:float}}
-     */
     public function paymentReport(array $filters): array
     {
         $query = Payment::query()

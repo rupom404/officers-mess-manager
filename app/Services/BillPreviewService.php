@@ -51,7 +51,8 @@ class BillPreviewService
 
     public function cacheKey(int $messId, int $year, int $month): string
     {
-        return "bill-preview:v2:{$messId}:{$year}-".str_pad((string) $month, 2, '0', STR_PAD_LEFT);
+        // Version bumped to v4 to bust cached reports instantly
+        return "bill-preview:v4:{$messId}:{$year}-".str_pad((string) $month, 2, '0', STR_PAD_LEFT);
     }
 
     public function invalidate(int $year, int $month): void
@@ -141,7 +142,7 @@ class BillPreviewService
         $paymentsByMember = $this->paymentsByMember($memberIds, $start, $end);
         $advanceBalances = $this->advanceBalances($memberIds);
 
-        // Incorporate guest meals natively into the mess total meals
+        // Denominator includes all meals eaten this month across members
         $totalMeals = 0.0;
         foreach ($members as $member) {
             $totalMeals += ($mealTotalsByMember[$member->id] ?? 0.0) + ($guestTotalsByMember[$member->id] ?? 0.0);
@@ -154,12 +155,14 @@ class BillPreviewService
             $disabledDayCountByMember[$mid] = count($disabledDaysByMember[$mid] ?? []);
         }
 
+        $activeStatusVal = MemberStatus::ACTIVE instanceof \BackedEnum ? MemberStatus::ACTIVE->value : (string) MemberStatus::ACTIVE;
+
         $rows = [];
         foreach ($members as $member) {
             $regMeals = $mealTotalsByMember[$member->id] ?? 0.0;
             $gstMeals = $guestTotalsByMember[$member->id] ?? 0.0;
-            $meals = $regMeals + $gstMeals; // Host + Guest total combined
-            
+            $meals = $regMeals + $gstMeals;
+
             $mealCost = round($meals * $mealRate, 2);
 
             $activeDays = $this->activeDaysForMember($member, $start, $end, $closedDatesSet, $disabledDayCountByMember[$member->id] ?? 0);
@@ -167,7 +170,7 @@ class BillPreviewService
                 ? round($totalFixed * ($activeDays / $daysInMonth), 2)
                 : 0.0;
 
-            $guestTotal = 0.0; // Nullify isolated flat cash charge to prevent double billing
+            $guestTotal = 0.0;
             $bill = round($mealCost + $fixedShare + $guestTotal, 2);
 
             $billPayments = $paymentsByMember[$member->id]['bill_payments'] ?? 0.0;
@@ -179,6 +182,32 @@ class BillPreviewService
             $owedAfterPayments = max(0.0, $bill - $billPayments);
             $advanceApplied = min($advanceBalance, $owedAfterPayments);
             $due = round($owedAfterPayments - $advanceApplied, 2);
+
+            // Determine active status
+            $memberStatusStr = $member->status instanceof \BackedEnum ? $member->status->value : (string) $member->status;
+            $isActive = strcasecmp($memberStatusStr, $activeStatusVal) === 0;
+
+            // Check if former member had activity or overlapping active tenure in this month
+            $hasMeals = $meals > 0.001;
+            $hasPayments = ($billPayments > 0.001) || ($advancePayments > 0.001);
+            $hasBill = $bill > 0.001;
+            $hasBalance = (abs($broughtForward) > 0.01) || ($due > 0.01) || ($advanceApplied > 0.01) || (abs($advanceBalance - $dueBalance) > 0.01);
+
+            $wasActiveInMonth = false;
+            if ($member->leaving_date) {
+                $leavingDate = $member->leaving_date instanceof Carbon ? $member->leaving_date : Carbon::parse($member->leaving_date);
+                $joiningDate = $member->joining_date
+                    ? ($member->joining_date instanceof Carbon ? $member->joining_date : Carbon::parse($member->joining_date))
+                    : null;
+
+                $wasActiveInMonth = $leavingDate->startOfDay()->gte($start)
+                    && (! $joiningDate || $joiningDate->startOfDay()->lte($end));
+            }
+
+            // Exclude former members who have zero meals, zero payments, zero bill, and zero balance in this month
+            if (! $isActive && ! $hasMeals && ! $hasPayments && ! $hasBill && ! $hasBalance && ! $wasActiveInMonth) {
+                continue;
+            }
 
             $rows[] = [
                 'member_id' => $member->id,
@@ -327,6 +356,15 @@ class BillPreviewService
 
     private function activeDaysForMember(Member $member, Carbon $start, Carbon $end, array $closedDatesSet = [], int $disabledDayCount = 0): int
     {
+        $statusStr = $member->status instanceof \BackedEnum ? $member->status->value : (string) $member->status;
+        $activeStatusVal = MemberStatus::ACTIVE instanceof \BackedEnum ? MemberStatus::ACTIVE->value : (string) MemberStatus::ACTIVE;
+        $isActive = strcasecmp($statusStr, $activeStatusVal) === 0;
+
+        // Inactive/former members without a leaving date do not accrue active days
+        if (! $isActive && ! $member->leaving_date) {
+            return 0;
+        }
+
         $memberStart = $member->joining_date && $member->joining_date->gt($start)
             ? $member->joining_date->copy()
             : $start->copy();
