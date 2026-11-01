@@ -16,9 +16,29 @@ class MonthCloseController extends Controller
 {
     public function index(Request $request, MonthCloseService $monthCloseService): View|RedirectResponse
     {
-        $year = (int) $request->input('year', now()->year);
-        $month = (int) $request->input('month', now()->month);
         $messId = Mess::activeId() ?? 1;
+
+        // Auto-detect the target month:
+        // If not specified in the URL, find the month immediately following the last closed month
+        if ($request->has('year') && $request->has('month')) {
+            $year = (int) $request->input('year');
+            $month = (int) $request->input('month');
+        } else {
+            $lastClosing = MonthlyClosing::query()
+                ->where('mess_id', $messId)
+                ->orderByDesc('year')
+                ->orderByDesc('month')
+                ->first();
+
+            if ($lastClosing) {
+                $nextPeriod = Carbon::create($lastClosing->year, $lastClosing->month, 1)->addMonth();
+                $year = $nextPeriod->year;
+                $month = $nextPeriod->month;
+            } else {
+                $year = now()->year;
+                $month = now()->month;
+            }
+        }
 
         try {
             $existing = MonthlyClosing::query()
