@@ -11,6 +11,8 @@ use App\Models\Member;
 use App\Models\MemberDisabledDay;
 use App\Models\Mess;
 use App\Models\MessClosedDay;
+use App\Models\MonthlyClosing;
+use App\Models\MonthlyMemberSummary;
 use App\Models\Payment;
 use App\Support\ExpenseKind;
 use App\Support\MealType;
@@ -51,8 +53,7 @@ class BillPreviewService
 
     public function cacheKey(int $messId, int $year, int $month): string
     {
-        // Version bumped to v4 to bust cached reports instantly
-        return "bill-preview:v4:{$messId}:{$year}-".str_pad((string) $month, 2, '0', STR_PAD_LEFT);
+        return "bill-preview:v5:{$messId}:{$year}-".str_pad((string) $month, 2, '0', STR_PAD_LEFT);
     }
 
     public function invalidate(int $year, int $month): void
@@ -140,9 +141,11 @@ class BillPreviewService
         $mealTotalsByMember = $this->mealTotals($memberIds, $start, $end, $closedDatesSet, $disabledDaysByMember);
         $guestTotalsByMember = $this->guestTotals($memberIds, $start, $end);
         $paymentsByMember = $this->paymentsByMember($memberIds, $start, $end);
+        
+        // Fetch explicit brought-forward balances from the prior month's snapshot
+        $broughtForwardBalances = $this->exactBroughtForwardBalances($messId, $memberIds, $year, $month);
         $advanceBalances = $this->advanceBalances($memberIds);
 
-        // Denominator includes all meals eaten this month across members
         $totalMeals = 0.0;
         foreach ($members as $member) {
             $totalMeals += ($mealTotalsByMember[$member->id] ?? 0.0) + ($guestTotalsByMember[$member->id] ?? 0.0);
@@ -178,16 +181,16 @@ class BillPreviewService
             $dueBalance = $advanceBalances[$member->id]['due_balance'] ?? 0.0;
             $advancePayments = $paymentsByMember[$member->id]['advance_payments'] ?? 0.0;
 
-            $broughtForward = round(($advanceBalance - $dueBalance) - $advancePayments, 2);
+            // Use the explicit snapshot balance from last month, falling back to member.opening_balance
+            $broughtForward = $broughtForwardBalances[$member->id] ?? round(($advanceBalance - $dueBalance) - $advancePayments, 2);
+            
             $owedAfterPayments = max(0.0, $bill - $billPayments);
             $advanceApplied = min($advanceBalance, $owedAfterPayments);
             $due = round($owedAfterPayments - $advanceApplied, 2);
 
-            // Determine active status
             $memberStatusStr = $member->status instanceof \BackedEnum ? $member->status->value : (string) $member->status;
             $isActive = strcasecmp($memberStatusStr, $activeStatusVal) === 0;
 
-            // Check if former member had activity or overlapping active tenure in this month
             $hasMeals = $meals > 0.001;
             $hasPayments = ($billPayments > 0.001) || ($advancePayments > 0.001);
             $hasBill = $bill > 0.001;
@@ -204,7 +207,6 @@ class BillPreviewService
                     && (! $joiningDate || $joiningDate->startOfDay()->lte($end));
             }
 
-            // Exclude former members who have zero meals, zero payments, zero bill, and zero balance in this month
             if (! $isActive && ! $hasMeals && ! $hasPayments && ! $hasBill && ! $hasBalance && ! $wasActiveInMonth) {
                 continue;
             }
@@ -241,6 +243,56 @@ class BillPreviewService
             'closed_days_count' => count($closedDates),
             'members' => $rows,
         ];
+    }
+
+    /**
+     * Look back exactly one month and extract the locked closing balances to use as this month's Brought Forward.
+     */
+    private function exactBroughtForwardBalances(int $messId, array $memberIds, int $year, int $month): array
+    {
+        if (empty($memberIds)) {
+            return [];
+        }
+
+        $targetDate = Carbon::create($year, $month, 1)->subMonth();
+        $targetYear = $targetDate->year;
+        $targetMonth = $targetDate->month;
+
+        $closing = MonthlyClosing::query()
+            ->where('mess_id', $messId)
+            ->where('year', $targetYear)
+            ->where('month', $targetMonth)
+            ->first();
+
+        $balances = [];
+
+        if ($closing) {
+            $summaries = MonthlyMemberSummary::query()
+                ->where('monthly_closing_id', $closing->id)
+                ->whereIn('member_id', $memberIds)
+                ->get(['member_id', 'closing_balance']);
+
+            foreach ($summaries as $summary) {
+                if ($summary->closing_balance !== null) {
+                    $balances[$summary->member_id] = (float) $summary->closing_balance;
+                }
+            }
+        }
+
+        // Fill missing balances from the members table (for brand new members who have no history)
+        if (count($balances) < count($memberIds) && Schema::hasColumn('members', 'opening_balance')) {
+            $members = Member::withoutGlobalScopes()
+                ->whereIn('id', $memberIds)
+                ->get(['id', 'opening_balance']);
+                
+            foreach ($members as $m) {
+                if (!isset($balances[$m->id])) {
+                    $balances[$m->id] = (float) ($m->opening_balance ?? 0.0);
+                }
+            }
+        }
+
+        return $balances;
     }
 
     private function mealTotals(array $memberIds, Carbon $start, Carbon $end, array $closedDatesSet = [], array $disabledDaysByMember = []): array
@@ -360,7 +412,6 @@ class BillPreviewService
         $activeStatusVal = MemberStatus::ACTIVE instanceof \BackedEnum ? MemberStatus::ACTIVE->value : (string) MemberStatus::ACTIVE;
         $isActive = strcasecmp($statusStr, $activeStatusVal) === 0;
 
-        // Inactive/former members without a leaving date do not accrue active days
         if (! $isActive && ! $member->leaving_date) {
             return 0;
         }
