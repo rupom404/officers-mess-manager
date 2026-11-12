@@ -49,4 +49,14 @@ class GuestMealController extends Controller
             ->route('mess.guest-meals.index')
             ->with('success', __('Guest meal updated.'));
     }
+    /**
+     * Remove the specified guest meal from storage.
+     */
+    public function destroy(\App\Models\GuestMeal $guestMeal)
+    {
+        $guestMeal->delete();
+
+        return redirect()->route('mess.guest-meals.index')
+            ->with('success', __('Guest meal permanently deleted.'));
+    }
 }
