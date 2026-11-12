@@ -41,17 +41,22 @@ class GuestMealController extends Controller
      */
     public function edit(\App\Models\GuestMeal $guestMeal)
     {
-        // Safe fetch: load all members for this mess and manually filter in PHP 
-        // to avoid any Postgres column type mismatch on 'is_active' or 'status' Enums.
+        // Safely fetch only active members by converting the Enum to a string explicitly first
+        $activeStatus = \App\Support\MemberStatus::ACTIVE instanceof \BackedEnum 
+            ? \App\Support\MemberStatus::ACTIVE->value 
+            : 'active';
+
         $members = \App\Models\Member::where('mess_id', \App\Models\Mess::activeId())
-            ->get()
-            ->filter(function ($member) {
-                $status = $member->status instanceof \BackedEnum ? $member->status->value : (string) $member->status;
-                return strcasecmp($status, 'active') === 0;
-            })
-            ->values();
+            ->where('status', $activeStatus)
+            ->get();
             
-        $mealTypes = \App\Support\MealType::cases();
+        // We must define meal types manually to avoid the 'Call to undefined method cases()' error
+        // since MealType in this codebase is likely a class with constants, not a PHP 8.1+ Enum.
+        $mealTypes = [
+            ['value' => 'breakfast', 'label' => 'Breakfast (0.5)'],
+            ['value' => 'lunch', 'label' => 'Lunch (1.0)'],
+            ['value' => 'dinner', 'label' => 'Dinner (1.0)'],
+        ];
 
         // Pass an empty breadcrumb array to bypass the Tyro Service Provider crash
         return view('mess.guest-meals.edit', [
