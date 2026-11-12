@@ -39,21 +39,21 @@ class GuestMealController extends Controller
     /**
      * Show the form for editing the specified guest meal.
      */
-    public function edit(GuestMeal $guestMeal)
+    public function edit(\App\Models\GuestMeal $guestMeal)
     {
-        // Fetch necessary data for the form (like members, meal types, etc.)
+        // Fetch necessary data for the form using the correct 'status' column
         $members = \App\Models\Member::where('mess_id', \App\Models\Mess::activeId())
-            ->where('is_active', true)
+            ->where('status', \App\Support\MemberStatus::ACTIVE)
             ->get();
             
         $mealTypes = \App\Support\MealType::cases();
 
-        // The critical fix: we pass an empty breadcrumb array to bypass the Tyro Service Provider crash
+        // Pass an empty breadcrumb array to bypass the Tyro Service Provider crash
         return view('mess.guest-meals.edit', [
             'guestMeal' => $guestMeal,
             'members' => $members,
             'mealTypes' => $mealTypes,
-            'breadcrumbs' => [] // <--- This prevents the TypeError
+            'breadcrumbs' => []
         ]);
     }
 
