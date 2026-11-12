@@ -41,10 +41,15 @@ class GuestMealController extends Controller
      */
     public function edit(\App\Models\GuestMeal $guestMeal)
     {
-        // Fetch necessary data for the form using the correct 'status' column
+        // Safe fetch: load all members for this mess and manually filter in PHP 
+        // to avoid any Postgres column type mismatch on 'is_active' or 'status' Enums.
         $members = \App\Models\Member::where('mess_id', \App\Models\Mess::activeId())
-            ->where('status', \App\Support\MemberStatus::ACTIVE)
-            ->get();
+            ->get()
+            ->filter(function ($member) {
+                $status = $member->status instanceof \BackedEnum ? $member->status->value : (string) $member->status;
+                return strcasecmp($status, 'active') === 0;
+            })
+            ->values();
             
         $mealTypes = \App\Support\MealType::cases();
 
