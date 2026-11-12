@@ -41,20 +41,7 @@ class GuestMealController extends Controller
      */
     public function edit(GuestMeal $guestMeal)
     {
-        // Fetch necessary data for the form (like members, meal types, etc.)
-        $members = \App\Models\Member::where('mess_id', \App\Models\Mess::activeId())
-            ->where('is_active', true)
-            ->get();
-            
-        $mealTypes = \App\Support\MealType::cases();
-
-        // The critical fix: we pass an empty breadcrumb array to bypass the Tyro Service Provider crash
-        return view('mess.guest-meals.edit', [
-            'guestMeal' => $guestMeal,
-            'members' => $members,
-            'mealTypes' => $mealTypes,
-            'breadcrumbs' => [] // <--- This prevents the TypeError
-        ]);
+        return view('mess.guest-meals.create', ['guestMeal' => new GuestMeal]);
     }
 
     public function update(UpdateGuestMealRequest $request, GuestMeal $guestMeal): RedirectResponse
@@ -65,7 +52,7 @@ class GuestMealController extends Controller
             ->route('mess.guest-meals.index')
             ->with('success', __('Guest meal updated.'));
     }
-    
+
     public function destroy(\App\Models\GuestMeal $guestMeal, \App\Services\BillPreviewService $previewService)
     {
         $date = $guestMeal->date instanceof \Carbon\Carbon 
