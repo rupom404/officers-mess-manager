@@ -341,3 +341,7 @@ Route::get('/admin/clean-mess', function () {
     
     return "<h2>Deep Clean Complete!</h2><br>" . implode("<br><br>", $messages) . "<br><br><b>Please check your Monthly Report now. The ghost record should be gone.</b><br><br><i>(Please delete this route from web.php later)</i>";
 });
+
+Route::delete('/mess/guest-meals/{guestMeal}', [\App\Http\Controllers\Mess\GuestMealController::class, 'destroy'])
+    ->middleware(['auth'])
+    ->name('mess.guest-meals.destroy');

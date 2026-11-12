@@ -39,31 +39,21 @@ class GuestMealController extends Controller
     /**
      * Show the form for editing the specified guest meal.
      */
-    public function edit(\App\Models\GuestMeal $guestMeal)
+    public function edit(GuestMeal $guestMeal)
     {
-        // Safely fetch only active members by converting the Enum to a string explicitly first
-        $activeStatus = \App\Support\MemberStatus::ACTIVE instanceof \BackedEnum 
-            ? \App\Support\MemberStatus::ACTIVE->value 
-            : 'active';
-
+        // Fetch necessary data for the form (like members, meal types, etc.)
         $members = \App\Models\Member::where('mess_id', \App\Models\Mess::activeId())
-            ->where('status', $activeStatus)
+            ->where('is_active', true)
             ->get();
             
-        // We must define meal types manually to avoid the 'Call to undefined method cases()' error
-        // since MealType in this codebase is likely a class with constants, not a PHP 8.1+ Enum.
-        $mealTypes = [
-            ['value' => 'breakfast', 'label' => 'Breakfast (0.5)'],
-            ['value' => 'lunch', 'label' => 'Lunch (1.0)'],
-            ['value' => 'dinner', 'label' => 'Dinner (1.0)'],
-        ];
+        $mealTypes = \App\Support\MealType::cases();
 
-        // Pass an empty breadcrumb array to bypass the Tyro Service Provider crash
+        // The critical fix: we pass an empty breadcrumb array to bypass the Tyro Service Provider crash
         return view('mess.guest-meals.edit', [
             'guestMeal' => $guestMeal,
             'members' => $members,
             'mealTypes' => $mealTypes,
-            'breadcrumbs' => []
+            'breadcrumbs' => [] // <--- This prevents the TypeError
         ]);
     }
 
@@ -75,14 +65,20 @@ class GuestMealController extends Controller
             ->route('mess.guest-meals.index')
             ->with('success', __('Guest meal updated.'));
     }
-    /**
-     * Remove the specified guest meal from storage.
-     */
-    public function destroy(\App\Models\GuestMeal $guestMeal)
+    
+    public function destroy(\App\Models\GuestMeal $guestMeal, \App\Services\BillPreviewService $previewService)
     {
+        $date = $guestMeal->date instanceof \Carbon\Carbon 
+            ? $guestMeal->date 
+            : \Carbon\Carbon::parse($guestMeal->date);
+
         $guestMeal->delete();
 
+        // Flush cache so host's meal count and monthly report update immediately
+        $previewService->invalidate($date->year, $date->month);
+        \Illuminate\Support\Facades\Cache::flush();
+
         return redirect()->route('mess.guest-meals.index')
-            ->with('success', __('Guest meal permanently deleted.'));
+            ->with('success', __('Guest meal deleted and deducted from host\'s meal total.'));
     }
 }

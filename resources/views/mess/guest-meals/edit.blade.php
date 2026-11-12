@@ -9,7 +9,7 @@
     </header>
 
     <div class="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-[#111827]">
-        <form method="POST" action="{{ route('mess.guest-meals.update', $guestMeal) }}">
+        <form method="POST" action="{{ route('mess.guest-meals.update', [$guestMeal->id]) }}">
             @csrf
             @method('PUT')
             
@@ -36,7 +36,7 @@
                 </p>
             </div>
             
-            <form action="{{ route('mess.guest-meals.destroy', $guestMeal) }}" method="POST" onsubmit="return confirm('{{ __('Are you sure you want to permanently delete this guest meal?') }}');">
+            <form action="{{ route('mess.guest-meals.destroy', [$guestMeal->id]) }}" method="POST" onsubmit="return confirm('{{ __('Are you sure you want to permanently delete this guest meal?') }}');">
                 @csrf
                 @method('DELETE')
                 <button type="submit" class="inline-flex items-center justify-center rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-rose-700 active:scale-95">
