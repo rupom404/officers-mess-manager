@@ -11,7 +11,7 @@
     <div class="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-[#111827]">
         <form method="POST" action="{{ route('mess.guest-meals.update', [$guestMeal->id]) }}">
             @csrf
-            @method('PUT')
+            @method('PATCH')
             
             @include('mess.guest-meals._form')
 

@@ -39,9 +39,9 @@ class GuestMealController extends Controller
     /**
      * Show the form for editing the specified guest meal.
      */
-    public function edit(GuestMeal $guestMeal)
+    public function edit(GuestMeal $guestMeal): View
     {
-        return view('mess.guest-meals.create', ['guestMeal' => new GuestMeal]);
+        return view('mess.guest-meals.edit', ['guestMeal' => $guestMeal]);
     }
 
     public function update(UpdateGuestMealRequest $request, GuestMeal $guestMeal): RedirectResponse
